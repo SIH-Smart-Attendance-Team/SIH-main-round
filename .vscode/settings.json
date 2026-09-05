@@ -1,0 +1,7 @@
+{ 
+  "python.analysis.extraPaths": [ "${workspaceFolder}" ], 
+  "python.autoComplete.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  "java.configuration.updateBuildConfiguration": "interactive"
+}
