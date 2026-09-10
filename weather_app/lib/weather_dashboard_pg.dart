@@ -6,37 +6,21 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
+import 'app_localizations.dart';
+import 'chat_models.dart';
 import 'settings_page.dart';
+import 'location_search_page.dart';
+import 'disaster_map_page.dart';
+import 'chat_page.dart';
 import 'weather_service.dart';
-
-enum Persona { farmer, fisherman, urbanCommuter }
-
-extension PersonaX on Persona {
-  String get label {
-    switch (this) {
-      case Persona.farmer:
-        return 'Farmer';
-      case Persona.fisherman:
-        return 'Fisherman';
-      case Persona.urbanCommuter:
-        return 'Urban Commuter';
-    }
-  }
-
-  IconData get icon {
-    switch (this) {
-      case Persona.farmer:
-        return Icons.agriculture_rounded;
-      case Persona.fisherman:
-        return Icons.sailing_rounded;
-      case Persona.urbanCommuter:
-        return Icons.directions_transit_rounded;
-    }
-  }
-}
+import 'offline_service.dart';
 
 const Map<String, String> kIndicLanguages = {
   'hi': 'हिन्दी (Hindi)',
@@ -64,21 +48,9 @@ const Map<String, String> kIndicLanguages = {
   'ks': 'کٲشُر (Kashmiri)',
 };
 
-class ChatMessage {
-  final String text;
-  final bool isUser;
-  final DateTime timestamp;
-  final Persona persona;
-
-  ChatMessage({
-    required this.text,
-    required this.isUser,
-    required this.persona,
-  }) : timestamp = DateTime.now();
-}
-
 class WeatherDashboardPage extends StatefulWidget {
-  const WeatherDashboardPage({super.key});
+  final void Function(String)? onLocaleChanged;
+  const WeatherDashboardPage({super.key, this.onLocaleChanged});
 
   @override
   State<WeatherDashboardPage> createState() => _WeatherDashboardPageState();
@@ -86,7 +58,7 @@ class WeatherDashboardPage extends StatefulWidget {
 
 class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
   Persona _persona = Persona.farmer;
-  String _langCode = 'hi';
+  String _langCode = 'en';
   String _locationLabel = 'New Delhi';
   WeatherData? _weatherData;
   String _condition = '—';
@@ -104,11 +76,14 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
   List<ChatMessage> _chatMessages = [];
   final _chatController = TextEditingController();
   bool _isSendingMessage = false;
+  final ScrollController _chatScrollController = ScrollController();
+  bool _isOnline = true;
 
   late final WeatherService _weatherService;
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   StreamSubscription<RecordState>? _recordSub;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   double _lat = 28.61;
   double _lon = 77.21;
@@ -117,6 +92,7 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
   void initState() {
     super.initState();
     _loadBackendUrl();
+    _loadSavedLanguage();
     _chatMessages = [
       ChatMessage(
         text: 'Hello! I\'m WeatherGPT. Ask me about the weather in any Indian language.',
@@ -127,14 +103,39 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     _recordSub = _recorder.onStateChanged().listen((state) {
       if (mounted) setState(() => _isRecording = state == RecordState.record);
     });
+    _isOnline = OfflineServices.instance.isOnline;
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      final online = OfflineServices.instance.isOnline;
+      if (mounted && online != _isOnline) {
+        setState(() => _isOnline = online);
+      }
+    });
+  }
+
+  Future<void> _loadSavedLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedLang = prefs.getString('app_lang') ?? 'en';
+    if (mounted) {
+      setState(() => _langCode = savedLang);
+    }
+  }
+
+  Future<void> _changeLanguage(String langCode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_lang', langCode);
+    if (mounted) {
+      setState(() => _langCode = langCode);
+    }
   }
 
   @override
   void dispose() {
     _recordSub?.cancel();
+    _connectivitySub?.cancel();
     _recorder.dispose();
     _player.dispose();
     _chatController.dispose();
+    _chatScrollController.dispose();
     super.dispose();
   }
 
@@ -162,7 +163,7 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     try {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+          accuracy: LocationAccuracy.best,
           timeLimit: Duration(seconds: 15),
         ),
       );
@@ -178,25 +179,47 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
       _fetchWeatherData();
     } catch (e) {
       debugPrint('Location error: $e');
+      // Fall back to last known position for better accuracy
+      try {
+        final lastPos = await Geolocator.getLastKnownPosition();
+        if (lastPos != null) {
+          setState(() {
+            _lat = lastPos.latitude;
+            _lon = lastPos.longitude;
+            _locationLabel = '${lastPos.latitude.toStringAsFixed(4)}, ${lastPos.longitude.toStringAsFixed(4)}';
+          });
+          final placeName = await _reverseGeocode(lastPos.latitude, lastPos.longitude);
+          if (placeName != null && placeName.isNotEmpty) {
+            setState(() => _locationLabel = placeName);
+          }
+        }
+      } catch (e2) {
+        debugPrint('Last known position error: $e2');
+      }
       _fetchWeatherData();
     }
   }
 
   Future<void> _refreshLocation() async {
-    final pos = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 15),
-      ),
-    );
-    setState(() {
-      _lat = pos.latitude;
-      _lon = pos.longitude;
-      _locationLabel = '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
-    });
-    final placeName = await _reverseGeocode(pos.latitude, pos.longitude);
-    if (placeName != null && placeName.isNotEmpty) {
-      setState(() => _locationLabel = placeName);
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      setState(() {
+        _lat = pos.latitude;
+        _lon = pos.longitude;
+        _locationLabel = '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
+      });
+      final placeName = await _reverseGeocode(pos.latitude, pos.longitude);
+      if (placeName != null && placeName.isNotEmpty) {
+        setState(() => _locationLabel = placeName);
+      }
+    } catch (e) {
+      debugPrint('Refresh location error: $e');
+      _showSnack('Could not refresh location. Using last known position.');
     }
     _fetchWeatherData();
   }
@@ -254,6 +277,7 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
       });
     } catch (e) {
       debugPrint('Weather fetch error: $e');
+      _showSnack('Could not load weather data. Check your connection.');
     } finally {
       if (mounted) setState(() => _isLoadingWeather = false);
     }
@@ -286,6 +310,7 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
       setState(() => _forecast = forecast);
     } catch (e) {
       debugPrint('Forecast fetch error: $e');
+      _showSnack('Could not load forecast data.');
     } finally {
       if (mounted) setState(() => _isLoadingForecast = false);
     }
@@ -336,6 +361,31 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     return Icons.cloud_rounded;
   }
 
+  List<Color> _getWeatherGradient(int? code) {
+    if (code == null) return [const Color(0xFF667eea), const Color(0xFF764ba2)];
+    if (code == 0) return [const Color(0xFFFF9A56), const Color(0xFFFFD93D)];
+    if (code <= 3) return [const Color(0xFF4facfe), const Color(0xFF00f2fe)];
+    if (code <= 48) return [const Color(0xFF8e9aaf), const Color(0xFFc9d6df)];
+    if (code <= 57) return [const Color(0xFF4facfe), const Color(0xFF87ceeb)];
+    if (code <= 67) return [const Color(0xFF0f4c75), const Color(0xFF3282b8)];
+    if (code <= 77) return [const Color(0xFFe0eafc), const Color(0xFFcfdef3)];
+    if (code <= 82) return [const Color(0xFF1e3c72), const Color(0xFF2a5298)];
+    if (code >= 95) return [const Color(0xFF434343), const Color(0xFF000000)];
+    return [const Color(0xFF667eea), const Color(0xFF764ba2)];
+  }
+
+  void _scrollChatToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScrollController.hasClients) {
+        _chatScrollController.animateTo(
+          _chatScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> _startRecording() async {
     final hasPerm = await _recorder.hasPermission();
     if (!hasPerm) {
@@ -343,9 +393,9 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
       return;
     }
     final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/weathergpt_${DateTime.now().millisecondsSinceEpoch}.wav';
+    final path = '${dir.path}/weathergpt_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await _recorder.start(
-      const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1),
+      const RecordConfig(encoder: AudioEncoder.aacLc, sampleRate: 16000, numChannels: 1),
       path: path,
     );
   }
@@ -356,28 +406,91 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
 
     setState(() => _isProcessingVoice = true);
     try {
-      final result = await _weatherService.fetchVoiceAdvisory(
-        _lat,
-        _lon,
-        _langCode,
-        _persona.name,
-        File(path),
+      final result = await _weatherService.fetchExpertVoice(
+        lat: _lat,
+        lon: _lon,
+        persona: _persona.backendName,
+        lang: _langCode,
+        audioFile: File(path),
+        locationName: _locationLabel,
+        history: _chatMessages.map((m) => {
+          'role': m.isUser ? 'user' : 'assistant',
+          'content': m.text,
+        }).toList(),
       );
 
-      setState(() => _advisoryText = result.nativeAdvisory);
+      setState(() => _advisoryText = result.reply);
 
-      if (result.audioBase64.isNotEmpty) {
-        final audioBytes = base64Decode(result.audioBase64);
+      _chatMessages.add(ChatMessage(
+        text: result.transcript,
+        isUser: true,
+        persona: _persona,
+      ));
+      _chatMessages.add(ChatMessage(
+        text: result.reply,
+        isUser: false,
+        persona: _persona,
+      ));
+
+      if (result.replyAudioBase64.isNotEmpty) {
+        final audioBytes = base64Decode(result.replyAudioBase64);
         final tmp = await getTemporaryDirectory();
-        final outPath = '${tmp.path}/advisory.mp3';
+        final outPath = '${tmp.path}/advisory_voice.mp3';
         await File(outPath).writeAsBytes(audioBytes);
         await _player.play(DeviceFileSource(outPath));
-      } else if (result.transcript != null && result.transcript!.isNotEmpty) {
-        _showSnack(result.transcript!);
+      } else if (result.transcript.isNotEmpty) {
+        _showSnack(result.transcript);
       }
+      _scrollChatToBottom();
     } catch (e) {
       debugPrint('Voice pipeline error: $e');
       _showSnack('Could not process voice query');
+    } finally {
+      if (mounted) setState(() => _isProcessingVoice = false);
+    }
+  }
+
+  Future<void> _pickAndAnalyzeFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = File(result.files.single.path!);
+    final fileName = result.files.single.name;
+
+    setState(() => _isProcessingVoice = true);
+    try {
+      final chatResult = await _weatherService.fetchExpertAnalyze(
+        lat: _lat,
+        lon: _lon,
+        persona: _persona.backendName,
+        lang: _langCode,
+        file: file,
+        prompt: AppLocalizations.of(context).typeMessage,
+        history: _chatMessages.map((m) => {
+          'role': m.isUser ? 'user' : 'assistant',
+          'content': m.text,
+        }).toList(),
+      );
+
+      setState(() {
+        _chatMessages.add(ChatMessage(
+          text: '[Uploaded: $fileName] ${AppLocalizations.of(context).typeMessage}',
+          isUser: true,
+          persona: _persona,
+        ));
+        _chatMessages.add(ChatMessage(
+          text: chatResult.reply,
+          isUser: false,
+          persona: _persona,
+        ));
+      });
+      _scrollChatToBottom();
+    } catch (e) {
+      debugPrint('File analysis error: $e');
+      _showSnack('Could not analyze file');
     } finally {
       if (mounted) setState(() => _isProcessingVoice = false);
     }
@@ -392,22 +505,31 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     if (query.trim().isEmpty) return;
     setState(() => _isProcessingVoice = true);
     try {
-      final result = await _weatherService.fetchTextAdvisory(
-        _lat,
-        _lon,
-        _langCode,
-        _persona.name,
-        query,
+      final result = await _weatherService.fetchExpertChat(
+        lat: _lat,
+        lon: _lon,
+        persona: _persona.backendName,
+        lang: _langCode,
+        query: query,
+        locationName: _locationLabel,
+        history: _chatMessages.map((m) => {
+          'role': m.isUser ? 'user' : 'assistant',
+          'content': m.text,
+        }).toList(),
       );
-      setState(() => _advisoryText = result.nativeAdvisory);
 
-       if (result.audioBase64.isNotEmpty) {
-        final audioBytes = base64Decode(result.audioBase64);
-        final tmp = await getTemporaryDirectory();
-        final outPath = '${tmp.path}/advisory_text.mp3';
-        await File(outPath).writeAsBytes(audioBytes);
-        await _player.play(DeviceFileSource(outPath));
-      }
+      setState(() => _advisoryText = result.reply);
+      _chatMessages.add(ChatMessage(
+        text: query,
+        isUser: true,
+        persona: _persona,
+      ));
+      _chatMessages.add(ChatMessage(
+        text: result.reply,
+        isUser: false,
+        persona: _persona,
+      ));
+      _scrollChatToBottom();
     } catch (e) {
       debugPrint('Text advisory error: $e');
       _showSnack('Could not process text query');
@@ -427,37 +549,36 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     });
 
     try {
-      final result = await _weatherService.fetchTextAdvisory(
-        _lat,
-        _lon,
-        _langCode,
-        _persona.name,
-        text,
+      final result = await _weatherService.fetchExpertChat(
+        lat: _lat,
+        lon: _lon,
+        persona: _persona.backendName,
+        lang: _langCode,
+        query: text,
+        locationName: _locationLabel,
+        history: _chatMessages.map((m) => {
+          'role': m.isUser ? 'user' : 'assistant',
+          'content': m.text,
+        }).toList(),
       );
 
       setState(() {
-        _advisoryText = result.nativeAdvisory;
         _chatMessages.add(ChatMessage(
-            text: result.nativeAdvisory,
-            isUser: false,
-            persona: _persona));
+          text: result.reply,
+          isUser: false,
+          persona: _persona,
+        ));
       });
-
-      if (result.audioBase64.isNotEmpty) {
-        final audioBytes = base64Decode(result.audioBase64);
-        final tmp = await getTemporaryDirectory();
-        final outPath = '${tmp.path}/advisory_chat.mp3';
-        await File(outPath).writeAsBytes(audioBytes);
-        await _player.play(DeviceFileSource(outPath));
-      }
+      _scrollChatToBottom();
     } catch (e) {
       debugPrint('Chat error: $e');
       setState(() {
         _chatMessages.add(ChatMessage(
-            text: 'Sorry, I could not process your request. Please try again.',
-            isUser: false,
-            persona: _persona));
+          text: 'Sorry, I could not process your request. Please try again.',
+          isUser: false,
+          persona: _persona));
       });
+      _scrollChatToBottom();
     } finally {
       if (mounted) setState(() => _isSendingMessage = false);
     }
@@ -468,182 +589,386 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isWide = MediaQuery.sizeOf(context).width >= 700;
+    final maxContentWidth = isWide ? 900.0 : double.infinity;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _fetchWeatherData,
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(child: _buildHeader(colorScheme, theme)),
-
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                sliver: isWide
-                    ? SliverToBoxAdapter(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxContentWidth),
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _fetchWeatherData,
+              child: CustomScrollView(
+                slivers: [
+                  if (!_isOnline)
+                    SliverToBoxAdapter(
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        color: colorScheme.errorContainer,
                         child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(child: _buildPersonaSelector(colorScheme)),
-                            const SizedBox(width: 16),
-                            Expanded(child: _buildLanguageSelector(colorScheme)),
+                            Icon(Icons.wifi_off_rounded, color: colorScheme.onErrorContainer, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'You are offline. Showing cached data.',
+                                style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onErrorContainer),
+                              ),
+                            ),
                           ],
                         ),
-                      )
-                    : SliverList(
-                        delegate: SliverChildListDelegate([
-                          _buildPersonaSelector(colorScheme),
-                          const SizedBox(height: 12),
-                          _buildLanguageSelector(colorScheme),
-                        ]),
                       ),
-              ),
+                    ),
+                  SliverToBoxAdapter(child: _buildHeader(colorScheme, theme)),
 
-              if (_alerts.isNotEmpty || _isLoadingAlerts)
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
-                  sliver: SliverToBoxAdapter(
-                    child: _isLoadingAlerts
-                        ? const Center(child: CircularProgressIndicator())
-                        : _buildAlertsSection(colorScheme, theme),
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    sliver: isWide
+                        ? SliverToBoxAdapter(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: _buildPersonaSelector(colorScheme)),
+                                const SizedBox(width: 16),
+                                Expanded(child: _buildLanguageSelector(colorScheme)),
+                              ],
+                            ),
+                          )
+                        : SliverList(
+                            delegate: SliverChildListDelegate([
+                              _buildPersonaSelector(colorScheme),
+                              const SizedBox(height: 12),
+                              _buildLanguageSelector(colorScheme),
+                            ]),
+                          ),
                   ),
-                ),
 
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                sliver: SliverToBoxAdapter(
-                  child: _buildCurrentWeatherDetails(colorScheme, theme),
-                ),
-              ),
+                  if (_alerts.isNotEmpty || _isLoadingAlerts)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                      sliver: SliverToBoxAdapter(
+                        child: _isLoadingAlerts
+                            ? const Center(child: CircularProgressIndicator())
+                            : _buildAlertsSection(colorScheme, theme),
+                      ),
+                    ),
 
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                sliver: SliverToBoxAdapter(
-                  child: _isLoadingForecast
-                      ? const Center(child: CircularProgressIndicator())
-                      : _buildForecastSection(colorScheme, theme),
-                ),
-              ),
-
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                sliver: SliverToBoxAdapter(
-                  child: _isLoadingClimate
-                      ? const Center(child: CircularProgressIndicator())
-                      : _buildClimateSection(colorScheme, theme),
-                ),
-              ),
-
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildVoiceButton(colorScheme),
-                      const SizedBox(height: 16),
-                      _buildTextAdvisoryButton(colorScheme, theme),
-                    ],
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildCurrentWeatherDetails(colorScheme, theme),
+                    ),
                   ),
-                ),
-              ),
 
-              if (_advisoryText.isNotEmpty)
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                  sliver: SliverToBoxAdapter(
-                    child: _buildAdvisoryCard(colorScheme, theme),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    sliver: SliverToBoxAdapter(
+                      child: _isLoadingForecast
+                          ? const Center(child: CircularProgressIndicator())
+                          : _buildForecastSection(colorScheme, theme),
+                    ),
                   ),
-                ),
 
-               if (_chatMessages.length > 1)
-                 SliverPadding(
-                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 80),
-                   sliver: SliverToBoxAdapter(
-                     child: _buildChatMessages(colorScheme, theme),
-                   ),
-                 ),
-            ],
+                  if (_marineMetrics != null)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                      sliver: SliverToBoxAdapter(
+                        child: _buildMarineSection(colorScheme, theme),
+                      ),
+                    ),
+
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
+                    sliver: SliverToBoxAdapter(
+                      child: _isLoadingClimate
+                          ? const Center(child: CircularProgressIndicator())
+                          : _buildClimateSection(colorScheme, theme),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
-      bottomNavigationBar: _buildChatInput(colorScheme, theme),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showHelpBottomSheet,
+        icon: const Icon(Icons.support_rounded),
+        label: Text(AppLocalizations.of(context).helpline),
+        backgroundColor: colorScheme.primaryContainer,
+      ),
     );
   }
 
   Widget _buildHeader(ColorScheme cs, ThemeData theme) {
+    final gradientColors = _getWeatherGradient(_weatherData?.weatherCode);
+    final weatherIcon = _weatherCodeToIcon(_weatherData?.weatherCode);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [cs.primaryContainer, cs.primary.withValues(alpha: 0.85)],
+          colors: gradientColors,
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
+        boxShadow: [
+          BoxShadow(
+            color: gradientColors[0].withValues(alpha: 0.4),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Icon(Icons.location_on_rounded, color: cs.onPrimaryContainer, size: 20),
-              const SizedBox(width: 6),
-              Text(
-                _locationLabel,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: cs.onPrimaryContainer,
-                  fontWeight: FontWeight.w600,
-                ),
+          // Decorative animated circles for visual depth
+          Positioned(
+            top: -40,
+            right: -30,
+            child: Container(
+              width: 140,
+              height: 140,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.08),
               ),
-              const Spacer(),
+            ),
+          ),
+          Positioned(
+            bottom: -50,
+            left: 100,
+            child: Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.06),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 60,
+            right: 60,
+            child: Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.1),
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+                    ),
+                    child: Icon(Icons.location_on_rounded, color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _locationLabel,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
               if (_isLoadingWeather)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                Container(
+                  width: 24,
+                  height: 24,
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 )
               else
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: Icon(Icons.refresh_rounded, color: cs.onPrimaryContainer),
-                      onPressed: _refreshLocation,
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.settings_rounded, color: cs.onPrimaryContainer),
-                      onPressed: () => _openSettings(),
-                    ),
+                    _buildHeaderIconButton(Icons.search_rounded, () async {
+                      final result = await Navigator.of(context).push<LocationSearchResult>(
+                        MaterialPageRoute(builder: (_) => const LocationSearchPage()),
+                      );
+                      if (result != null && mounted) {
+                        setState(() {
+                          _lat = result.latitude;
+                          _lon = result.longitude;
+                          _locationLabel = result.displayName;
+                        });
+                        _fetchWeatherData();
+                      }
+                    }),
+                    const SizedBox(width: 4),
+                    _buildHeaderIconButton(Icons.refresh_rounded, _refreshLocation),
+                    const SizedBox(width: 4),
+                    _buildHeaderIconButton(Icons.settings_rounded, () => _openSettings()),
+                    const SizedBox(width: 4),
+                    _buildHeaderIconButton(Icons.chat_rounded, () async {
+                      final result = await Navigator.of(context).push<ChatPage>(
+                        MaterialPageRoute(
+                          builder: (_) => ChatPage(
+                            lat: _lat,
+                            lon: _lon,
+                            locationName: _locationLabel,
+                            persona: _persona.backendName,
+                            language: _langCode,
+                          ),
+                        ),
+                      );
+                    }),
+                    const SizedBox(width: 4),
+                    _buildHeaderIconButton(Icons.map_rounded, () async {
+                      final result = await Navigator.of(context).push<Map<String, dynamic>?>(
+                        MaterialPageRoute(builder: (_) => DisasterMapPage(lat: _lat, lon: _lon)),
+                      );
+                      if (result != null && mounted) {
+                        setState(() {
+                          _lat = result['lat'] as double;
+                          _lon = result['lon'] as double;
+                          _locationLabel = result['name'] as String? ?? _locationLabel;
+                        });
+                        _fetchWeatherData();
+                      }
+                    }),
                   ],
                 ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _weatherData?.temperature != null
-                    ? '${_weatherData!.temperature!.round()}°'
-                    : '--°',
-                style: theme.textTheme.displayLarge?.copyWith(
-                  color: cs.onPrimaryContainer,
-                  fontWeight: FontWeight.w300,
-                  height: 1.0,
-                ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(
-                  _condition,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: cs.onPrimaryContainer.withValues(alpha: 0.9),
+              const SizedBox(height: 28),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: _weatherData?.temperature?.toDouble() ?? 0),
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeOutCubic,
+                    builder: (ctx, val, child) {
+                      return Text(
+                        _weatherData?.temperature != null ? '${val.round()}°' : '--°',
+                        style: theme.textTheme.displayLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w300,
+                          height: 1.0,
+                          fontSize: 88,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withValues(alpha: 0.15),
+                              blurRadius: 24,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(weatherIcon, color: Colors.white, size: 18),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  _condition,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Icon(Icons.thermostat_rounded, color: Colors.white.withValues(alpha: 0.7), size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Feels like ${_weatherData?.apparentTemperature?.round() ?? _weatherData?.temperature?.round() ?? "--"}°C',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.water_drop_outlined, color: Colors.white.withValues(alpha: 0.7), size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatHumidity(),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Large animated weather icon
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.8, end: 1.0),
+                    duration: const Duration(milliseconds: 900),
+                    curve: Curves.easeOutBack,
+                    builder: (ctx, val, child) {
+                      return Transform.scale(
+                        scale: val,
+                        child: Container(
+                          width: 76,
+                          height: 76,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.18),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                blurRadius: 30,
+                                spreadRadius: 5,
+                              ),
+                            ],
+                          ),
+                          child: Icon(weatherIcon, color: Colors.white, size: 36),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ),
             ],
           ),
@@ -652,53 +977,162 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     );
   }
 
+  Widget _buildHeaderIconButton(IconData icon, VoidCallback onPressed) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.2),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCurrentWeatherDetails(ColorScheme cs, ThemeData theme) {
-    return Card(
-      elevation: 0,
-      color: cs.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Current Conditions',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [cs.primaryContainer, cs.primary.withValues(alpha: 0.3)],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.analytics_rounded, color: cs.primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Current Conditions',
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            LayoutBuilder(
-              builder: (ctx, constraints) {
-                final isWide = constraints.maxWidth >= 500;
-                if (isWide) {
-                  return Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                   _buildWeatherMetric(Icons.thermostat_rounded, 'TEMP', _formatTemp(), cs, theme),
-                   _buildWeatherMetric(Icons.water_drop_rounded, 'HUMIDITY', _formatHumidity(), cs, theme),
-                   _buildWeatherMetric(Icons.wind_power_rounded, 'WIND', _formatWind(), cs, theme),
-                   _buildWeatherMetric(Icons.beach_access_rounded, 'PRECIP', _formatPrecip(), cs, theme),
-                   _buildWeatherMetric(Icons.monitor_rounded, 'PRESSURE', _formatPressure(), cs, theme),
-                     ],
-                   );
-                 }
-                 return Wrap(
-                   spacing: 12,
-                   runSpacing: 12,
-                   children: [
-                     _buildWeatherMetric(Icons.thermostat_rounded, 'TEMP', _formatTemp(), cs, theme),
-                     _buildWeatherMetric(Icons.water_drop_rounded, 'HUMIDITY', _formatHumidity(), cs, theme),
-                     _buildWeatherMetric(Icons.wind_power_rounded, 'WIND', _formatWind(), cs, theme),
-                     _buildWeatherMetric(Icons.beach_access_rounded, 'PRECIP', _formatPrecip(), cs, theme),
-                     _buildWeatherMetric(Icons.monitor_rounded, 'PRESSURE', _formatPressure(), cs, theme),
-                  ],
-                );
-              },
+            const SizedBox(height: 20),
+            // Responsive metric grid using Wrap so cards never overflow
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _buildWeatherMetricCard(Icons.thermostat_rounded, 'TEMP', _formatTemp(), cs, theme),
+                _buildWeatherMetricCard(Icons.water_drop_rounded, 'HUMIDITY', _formatHumidity(), cs, theme),
+                _buildWeatherMetricCard(Icons.air_rounded, 'WIND', _formatWind(), cs, theme),
+                _buildWeatherMetricCard(Icons.umbrella_rounded, 'PRECIP', _formatPrecip(), cs, theme),
+                _buildWeatherMetricCard(Icons.speed_rounded, 'PRESSURE', _formatPressure(), cs, theme),
+                _buildWeatherMetricCard(Icons.wb_sunny_rounded, 'UV INDEX', _formatUvIndex(), cs, theme),
+                _buildWeatherMetricCard(Icons.visibility_rounded, 'VISIBILITY', _formatVisibility(), cs, theme),
+                _buildWeatherMetricCard(Icons.water_drop_outlined, 'DEW POINT', _formatDewPoint(), cs, theme),
+                _buildWeatherMetricCard(Icons.cloud_rounded, 'CLOUD', _formatCloudCover(), cs, theme),
+                _buildWeatherMetricCard(Icons.air_rounded, 'GUSTS', _formatWindGusts(), cs, theme),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildWeatherMetricCard(IconData icon, String label, String value, ColorScheme cs, ThemeData theme) {
+    // Calculate card width responsively based on screen width
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isCompact = screenWidth < 380;
+    final cardWidth = isCompact ? (screenWidth - 80) / 3 : 96.0;
+
+    return Container(
+      width: cardWidth,
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.primary.withValues(alpha: 0.12), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: cs.primary.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: cs.primary, size: 20),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+              fontSize: isCompact ? 9 : 10,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: cs.onSurface,
+              fontSize: isCompact ? 12 : 13,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _personaLocLabel(Persona p) {
+    final loc = AppLocalizations.of(context);
+    switch (p) {
+      case Persona.farmer:
+        return loc.farmer;
+      case Persona.fisherman:
+        return loc.fisherman;
+      case Persona.urbanCommuter:
+        return loc.urbanCommuter;
+    }
+  }
+
+  String _personaDesc(Persona p) {
+    final loc = AppLocalizations.of(context);
+    switch (p) {
+      case Persona.farmer:
+        return loc.farmerDesc;
+      case Persona.fisherman:
+        return loc.fishermanDesc;
+      case Persona.urbanCommuter:
+        return loc.urbanCommuterDesc;
+    }
   }
 
   String _formatTemp() {
@@ -726,52 +1160,181 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     return p != null ? '${p.toStringAsFixed(1)} hPa' : 'N/A';
   }
 
-  Widget _buildWeatherMetric(IconData icon, String label, String value, ColorScheme cs, ThemeData theme) {
-    return Column(
-      children: [
-        Icon(icon, color: cs.primary, size: 28),
-        const SizedBox(height: 6),
-        Text(label, style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
-        Text(value, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
-      ],
-    );
+  String _formatUvIndex() {
+    final uv = _weatherData?.uvIndex;
+    if (uv == null) return 'N/A';
+    if (uv < 3) return '${uv.toStringAsFixed(1)} Low';
+    if (uv < 6) return '${uv.toStringAsFixed(1)} Mod';
+    if (uv < 8) return '${uv.toStringAsFixed(1)} High';
+    if (uv < 11) return '${uv.toStringAsFixed(1)} V.High';
+    return '${uv.toStringAsFixed(1)} Ext';
+  }
+
+  String _formatVisibility() {
+    final v = _weatherData?.visibility;
+    if (v == null) return 'N/A';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)} km';
+    return '${v.round()} m';
+  }
+
+  String _formatDewPoint() {
+    final d = _weatherData?.dewPoint;
+    return d != null ? '${d.round()}°C' : 'N/A';
+  }
+
+  String _formatCloudCover() {
+    final c = _weatherData?.cloudCover;
+    return c != null ? '${c.round()}%' : 'N/A';
+  }
+
+  String _formatWindGusts() {
+    final g = _weatherData?.windGusts;
+    return g != null ? '${g.toStringAsFixed(1)} km/h' : 'N/A';
   }
 
   Widget _buildForecastSection(ColorScheme cs, ThemeData theme) {
-    return Card(
-      elevation: 0,
-      color: cs.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '7-Day Forecast',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [cs.primaryContainer, cs.primary.withValues(alpha: 0.3)],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.calendar_month_rounded, color: cs.primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '7-Day Forecast',
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const Spacer(),
+                if (_forecast.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_forecast.length} days',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: cs.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
              ListView.separated(
                shrinkWrap: true,
                physics: const NeverScrollableScrollPhysics(),
                itemCount: _forecast.isNotEmpty ? _forecast.length : 3,
-               separatorBuilder: (_, _) => const Divider(height: 1),
+               separatorBuilder: (_, _) => Divider(color: cs.outlineVariant.withValues(alpha: 0.2), height: 1),
                itemBuilder: (ctx, i) {
                  if (_forecast.isEmpty) {
-                   return ListTile(
-                      leading: Icon(Icons.calendar_today_rounded, color: cs.onSurfaceVariant.withValues(alpha: 0.3), size: 28),
-                     title: Text('No forecast data', style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant.withValues(alpha: 0.5))),
-                     trailing: Text('-- / --°', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurfaceVariant.withValues(alpha: 0.3))),
+                   return Padding(
+                     padding: const EdgeInsets.symmetric(vertical: 12),
+                     child: Row(
+                       children: [
+                         Container(
+                           padding: const EdgeInsets.all(10),
+                           decoration: BoxDecoration(
+                             color: cs.surfaceContainerHighest,
+                             borderRadius: BorderRadius.circular(12),
+                           ),
+                           child: Icon(Icons.calendar_today_rounded, color: cs.onSurfaceVariant.withValues(alpha: 0.3), size: 24),
+                         ),
+                         const SizedBox(width: 14),
+                          Text(AppLocalizations.of(context).noForecastData, style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant.withValues(alpha: 0.5))),
+                         const Spacer(),
+                         Text('-- / --°', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurfaceVariant.withValues(alpha: 0.3))),
+                       ],
+                     ),
                    );
                  }
                  final day = _forecast[i];
-                 return ListTile(
-                   leading: Icon(_weatherCodeToIcon(day.weatherCode), color: cs.primary, size: 28),
-                   title: Text(day.date, style: theme.textTheme.bodyMedium),
-                   trailing: Text(
-                     '${day.tempMin?.round() ?? "--"}° / ${day.tempMax?.round() ?? "--"}°',
-                     style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+                 final isToday = i == 0;
+                 return Padding(
+                   padding: const EdgeInsets.symmetric(vertical: 10),
+                   child: Row(
+                     children: [
+                       Container(
+                         padding: const EdgeInsets.all(10),
+                         decoration: BoxDecoration(
+                           color: isToday
+                               ? cs.primary.withValues(alpha: 0.15)
+                               : cs.primary.withValues(alpha: 0.08),
+                           borderRadius: BorderRadius.circular(12),
+                         ),
+                         child: Icon(
+                           _weatherCodeToIcon(day.weatherCode),
+                           color: cs.primary,
+                           size: 24,
+                         ),
+                       ),
+                       const SizedBox(width: 14),
+                       Expanded(
+                         child: Column(
+                           crossAxisAlignment: CrossAxisAlignment.start,
+                           children: [
+                             Text(
+                               day.date,
+                               style: theme.textTheme.bodyMedium?.copyWith(
+                                 fontWeight: FontWeight.w600,
+                                 color: isToday ? cs.primary : cs.onSurface,
+                               ),
+                             ),
+                             if (isToday) ...[
+                               const SizedBox(height: 2),
+                               Text(
+                                 'Today',
+                                 style: theme.textTheme.labelSmall?.copyWith(
+                                   color: cs.primary,
+                                   fontWeight: FontWeight.w700,
+                                 ),
+                               ),
+                             ],
+                           ],
+                         ),
+                       ),
+                       Container(
+                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                         decoration: BoxDecoration(
+                           color: isToday
+                               ? cs.primary
+                               : cs.surfaceContainerHighest,
+                           borderRadius: BorderRadius.circular(20),
+                         ),
+                         child: Text(
+                           '${day.tempMin?.round() ?? "--"}° / ${day.tempMax?.round() ?? "--"}°',
+                           style: theme.textTheme.bodyMedium?.copyWith(
+                             fontWeight: FontWeight.w800,
+                             color: isToday ? cs.onPrimary : cs.primary,
+                           ),
+                         ),
+                       ),
+                     ],
                    ),
                  );
                },
@@ -785,42 +1348,80 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
   Widget _buildClimateSection(ColorScheme cs, ThemeData theme) {
     final agri = _agriMetrics;
     final marine = _marineMetrics;
-    return Card(
-      elevation: 0,
-      color: cs.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: cs.shadow.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Climate & Environmental',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [cs.primaryContainer, cs.primary.withValues(alpha: 0.3)],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.eco_rounded, color: cs.primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  AppLocalizations.of(context).climateEnvironmental,
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            if (agri != null) _buildClimateMetricsGrid(cs, theme, {
-              'ET\u2080 (mm)': agri.et0FaoEvapotranspiration,
-              'Soil Temp 0-7cm': agri.soilTemp0To7cm,
-              'Soil Moisture 0-7cm': agri.soilMoisture0To7cm,
-              'Leaf Wetness': agri.leafWetnessProbability,
-            }),
-            if (marine != null) ...[
-              const SizedBox(height: 16),
-              Text('Marine Conditions', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
+            const SizedBox(height: 20),
+            if (agri != null) ...[
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.agriculture_rounded, color: cs.primary, size: 16),
+                  ),
+                  const SizedBox(width: 8),
+                   Text(AppLocalizations.of(context).agriculturalConditions, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.primary)),
+                ],
+              ),
+              const SizedBox(height: 12),
               _buildClimateMetricsGrid(cs, theme, {
-                'Wave Height (m)': marine.waveHeight,
-                'Sea Surface Temp': marine.seaSurfaceTemperature,
-                'Wind Gusts (km/h)': marine.windGusts,
+                'ET\u2080 (mm)': agri.et0FaoEvapotranspiration,
+                'Soil Temp': agri.soilTemp0To7cm,
+                'Soil Moisture': agri.soilMoisture0To7cm,
+                'Leaf Wetness': agri.leafWetnessProbability,
               }),
             ],
             if (agri == null && marine == null)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'No climate data available',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud_off_rounded, color: cs.onSurfaceVariant.withValues(alpha: 0.3), size: 24),
+                    const SizedBox(width: 12),
+                    Text(
+                      'No climate data available',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -839,29 +1440,70 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: isWide ? 4 : 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: isWide ? 3 : 3,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            // Use mainAxisExtent instead of childAspectRatio to prevent
+            // content overlap on small screens (the root cause of the
+            // climate section clipping on phones).
+            mainAxisExtent: isWide ? 88 : 82,
           ),
           itemCount: entries.length,
           itemBuilder: (ctx, i) {
             final e = entries[i];
-            return Card(
-              elevation: 0,
-              color: cs.surface,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(e.key, style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-                    const Spacer(),
-                    Text(
-                      e.value?.toStringAsFixed(1) ?? '--',
-                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+            return Container(
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerLowest,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: cs.primary.withValues(alpha: 0.15), width: 1),
+                boxShadow: [
+                  BoxShadow(
+                    color: cs.shadow.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: cs.primary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          e.key,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    e.value?.toStringAsFixed(1) ?? '--',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: cs.primary,
+                      fontSize: 18,
+                      height: 1.0,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             );
           },
@@ -874,18 +1516,23 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Persona', style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
+        Text(AppLocalizations.of(context).persona, style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         SegmentedButton<Persona>(
           segments: Persona.values
               .map((p) => ButtonSegment(
                     value: p,
-                    label: Text(p.label, style: const TextStyle(fontSize: 13)),
+                    label: Text(_personaLocLabel(p), style: const TextStyle(fontSize: 13)),
                     icon: Icon(p.icon, size: 18),
                   ))
               .toList(),
           selected: {_persona},
           onSelectionChanged: (s) => setState(() => _persona = s.first),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _personaDesc(_persona),
+          style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
         ),
       ],
     );
@@ -895,15 +1542,21 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Language', style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
+        Text(AppLocalizations.of(context).language, style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         DropdownMenu<String>(
           initialSelection: _langCode,
           dropdownMenuEntries: kIndicLanguages.entries
               .map((e) => DropdownMenuEntry(value: e.key, label: e.value))
               .toList(),
-          onSelected: (v) {
-            if (v != null) setState(() => _langCode = v);
+          onSelected: (v) async {
+            if (v != null) {
+              await _changeLanguage(v);
+              widget.onLocaleChanged?.call(v);
+              if (mounted) {
+                setState(() => _langCode = v);
+              }
+            }
           },
           width: double.infinity,
         ),
@@ -911,40 +1564,103 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
     );
   }
 
-  Widget _buildVoiceButton(ColorScheme cs) {
+  Widget _buildAttachButton(ColorScheme cs) {
     return GestureDetector(
-      onLongPressStart: (_) => _startRecording(),
-      onLongPressEnd: (_) => _stopRecordingAndSend(),
+      onTap: _pickAndAnalyzeFile,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        width: _isRecording ? 96 : 80,
-        height: _isRecording ? 96 : 80,
+        width: 72,
+        height: 72,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: _isRecording
-              ? cs.error
-              : _isProcessingVoice
-                  ? cs.secondary
-                  : cs.primary,
+          color: cs.tertiary,
           boxShadow: [
             BoxShadow(
-              color: (_isRecording ? cs.error : cs.primary).withValues(alpha: 0.45),
-              blurRadius: _isRecording ? 24 : 12,
-              spreadRadius: _isRecording ? 4 : 0,
+              color: cs.tertiary.withValues(alpha: 0.4),
+              blurRadius: 12,
+              spreadRadius: 1,
             ),
           ],
         ),
-        child: _isProcessingVoice
-            ? const Padding(
-                padding: EdgeInsets.all(22),
-                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-              )
-            : Icon(
-                _isRecording ? Icons.mic_rounded : Icons.mic_none_rounded,
-                color: Colors.white,
-                size: 36,
-              ),
+        child: Icon(
+          Icons.image_rounded,
+          color: Colors.white,
+          size: 32,
+        ),
       ),
+    );
+  }
+
+  Widget _buildVoiceButton(ColorScheme cs) {
+    final buttonColor = _isRecording
+        ? cs.error
+        : _isProcessingVoice
+            ? cs.secondary
+            : cs.primary;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            if (_isRecording)
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 1.0, end: 1.4),
+                duration: const Duration(milliseconds: 800),
+                builder: (ctx, val, child) {
+                  return Container(
+                    width: (_isRecording ? 96 : 80) * val,
+                    height: (_isRecording ? 96 : 80) * val,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: cs.error.withValues(alpha: 0.3 * (1.4 - val) / 0.4),
+                    ),
+                  );
+                },
+              ),
+            GestureDetector(
+              onLongPressStart: (_) => _startRecording(),
+              onLongPressEnd: (_) => _stopRecordingAndSend(),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: _isRecording ? 96 : 80,
+                height: _isRecording ? 96 : 80,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: buttonColor,
+                  boxShadow: [
+                    BoxShadow(
+                      color: buttonColor.withValues(alpha: 0.5),
+                      blurRadius: _isRecording ? 30 : 16,
+                      spreadRadius: _isRecording ? 6 : 2,
+                    ),
+                  ],
+                ),
+                child: _isProcessingVoice
+                    ? const Padding(
+                        padding: EdgeInsets.all(22),
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                      )
+                    : Icon(
+                        _isRecording ? Icons.mic_rounded : Icons.mic_none_rounded,
+                        color: Colors.white,
+                        size: 36,
+                      ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          _isRecording ? 'Release to send' : 'Hold to speak',
+          style: TextStyle(
+            color: cs.onSurfaceVariant,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 
@@ -967,30 +1683,31 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
                 child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white70),
               )
             : const Icon(Icons.text_format_rounded, size: 18),
-        label: const Text('Text Advisory'),
+        label: Text(AppLocalizations.of(context).textAdvisory),
       ),
     );
   }
 
   Future<String?> _showTextQueryDialog(BuildContext ctx) async {
     final controller = TextEditingController();
-    final personaLabel = _persona.label;
+    final personaLabel = _personaLocLabel(_persona);
     final langLabel = kIndicLanguages[_langCode] ?? 'English';
+    final loc = AppLocalizations.of(ctx);
     return showDialog<String>(
       context: ctx,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('Weather Question'),
+        title: Text(loc.weatherQuestion),
         content: SizedBox(
           width: double.maxFinite,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Persona: $personaLabel | Language: $langLabel'),
+              Text(loc.personaLabel(personaLabel, langLabel)),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
                 decoration: InputDecoration(
-                  hintText: _langCode == 'en' ? 'e.g. Will it rain tomorrow?' : 'আজকের আবহাওয়া কেমন থাকবে?',
+                  hintText: loc.typeMessage,
                   border: const OutlineInputBorder(),
                 ),
                 maxLines: 3,
@@ -999,48 +1716,50 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(dialogCtx, controller.text), child: const Text('Send')),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: Text(loc.cancel)),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, controller.text), child: Text(loc.send)),
         ],
       ),
     );
   }
 
   Widget _buildChatMessages(ColorScheme cs, ThemeData theme) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      reverse: true,
-      itemCount: _chatMessages.length,
-      itemBuilder: (ctx, i) {
-        final msg = _chatMessages[_chatMessages.length - 1 - i];
-        final isUser = msg.isUser;
-        return Align(
-          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.78,
-            ),
-            decoration: BoxDecoration(
-              color: isUser ? cs.primary : cs.surfaceContainerHighest,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: Radius.circular(isUser ? 16 : 4),
-                bottomRight: Radius.circular(isUser ? 4 : 16),
+    return SizedBox(
+      height: 320,
+      child: ListView.builder(
+        controller: _chatScrollController,
+        reverse: false,
+        itemCount: _chatMessages.length,
+        itemBuilder: (ctx, i) {
+          final msg = _chatMessages[i];
+          final isUser = msg.isUser;
+          return Align(
+            alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.78,
+              ),
+              decoration: BoxDecoration(
+                color: isUser ? cs.primary : cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(isUser ? 16 : 4),
+                  bottomRight: Radius.circular(isUser ? 4 : 16),
+                ),
+              ),
+              child: Text(
+                msg.text,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: isUser ? cs.onPrimary : cs.onSurfaceVariant,
+                ),
               ),
             ),
-            child: Text(
-              msg.text,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: isUser ? cs.onPrimary : cs.onSurfaceVariant,
-              ),
-            ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -1054,9 +1773,7 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
               child: TextField(
                 controller: _chatController,
                 decoration: InputDecoration(
-                  hintText: kIndicLanguages[_langCode] != null
-                      ? 'Type a message...'
-                      : 'Type a message...',
+                  hintText: AppLocalizations.of(context).typeMessage,
                   hintStyle: TextStyle(color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
                   border: const OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(24)),
@@ -1089,45 +1806,77 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
 
   Widget _buildAlertsSection(ColorScheme cs, ThemeData theme) {
     final levelColor = <String, Color>{
-      'Green': cs.tertiary,
-      'Yellow': Colors.yellow.shade700,
-      'Orange': Colors.orange.shade700,
-      'Red': cs.error,
+      'Green': const Color(0xFF4CAF50),
+      'Yellow': const Color(0xFFFFC107),
+      'Orange': const Color(0xFFFF9800),
+      'Red': const Color(0xFFF44336),
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: _alerts.map((alert) {
         final level = alert['level']?.toString() ?? 'Green';
-        final color = levelColor[level] ?? cs.tertiary;
+        final color = levelColor[level] ?? const Color(0xFF4CAF50);
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: Card(
-            elevation: 0,
-            color: cs.surfaceContainerHighest,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            decoration: BoxDecoration(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.15),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.warning_rounded, color: color, size: 24),
-                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.warning_rounded, color: color, size: 22),
+                  ),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          alert['title']?.toString() ?? 'Alert',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                alert['title']?.toString() ?? 'Alert',
+                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                level,
+                                style: theme.textTheme.labelSmall?.copyWith(color: color, fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ],
                         ),
-                        Text(
-                          level,
-                          style: theme.textTheme.bodySmall?.copyWith(color: color, fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 8),
                         Text(
                           alert['description']?.toString() ?? '',
-                          style: theme.textTheme.bodyMedium,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            height: 1.4,
+                          ),
                         ),
                       ],
                     ),
@@ -1155,12 +1904,144 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
               children: [
                 Icon(Icons.auto_awesome_rounded, color: cs.primary, size: 20),
                 const SizedBox(width: 8),
-                Text('Advisory', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(AppLocalizations.of(context).advisory, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 12),
             Text(_advisoryText, style: theme.textTheme.bodyLarge?.copyWith(height: 1.45)),
           ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launchWhatsAppHelpline() async {
+    final loc = AppLocalizations.of(context);
+    final phone = '15556667888';
+    final message = Uri.encodeComponent('Hello, I need weather help.');
+    final uris = [
+      Uri.parse('https://wa.me/$phone?text=$message'),
+      Uri.parse('whatsapp://send?phone=$phone&text=$message'),
+      Uri.parse('https://api.whatsapp.com/send?phone=$phone&text=$message'),
+    ];
+    bool launched = false;
+    for (final uri in uris) {
+      if (await canLaunchUrl(uri)) {
+        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (launched) break;
+      }
+    }
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('WhatsApp not available. Please install WhatsApp to use this feature.')),
+      );
+    }
+  }
+
+  Future<void> _launchCallHelpline() async {
+    final loc = AppLocalizations.of(context);
+    final phone = 'tel:+15556667888';
+    final uri = Uri.parse(phone);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${loc.callHelpline} not available')),
+        );
+      }
+    }
+  }
+
+  Widget _buildWhatsAppButton(VoidCallback onPressed) {
+    return Material(
+      color: const Color(0xFF25D366),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: const Padding(
+          padding: EdgeInsets.all(8),
+          child: Icon(Icons.message_rounded, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarineSection(ColorScheme cs, ThemeData theme) {
+    final marine = _marineMetrics;
+    if (marine == null) return const SizedBox.shrink();
+    return Card(
+      elevation: 0,
+      color: cs.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.water_rounded, color: cs.primary, size: 20),
+                const SizedBox(width: 8),
+                Text(AppLocalizations.of(context).marineConditions, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.primary)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildClimateMetricsGrid(cs, theme, {
+              'Wave Height': marine.waveHeight,
+              'Sea Temp': marine.seaSurfaceTemperature,
+              'Wind Gusts': marine.windGusts,
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showHelpBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(AppLocalizations.of(context).helpline, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _launchWhatsAppHelpline();
+                  },
+                  icon: const Icon(Icons.message_rounded),
+                  label: Text(AppLocalizations.of(context).whatsappHelpline),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF25D366),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _launchCallHelpline();
+                  },
+                  icon: const Icon(Icons.phone_rounded),
+                  label: Text(AppLocalizations.of(context).callHelpline),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

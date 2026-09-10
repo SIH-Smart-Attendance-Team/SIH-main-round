@@ -22,6 +22,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 from language_manager import (
     normalize_lang_code,
     prepare_for_nlu,
@@ -31,6 +32,8 @@ from language_manager import (
     get_bhashini_code,
 )
 from weather_service import WeatherService, get_weather_service
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Optional LangChain / Gemini imports (graceful degradation)
@@ -66,7 +69,7 @@ def _init_llm() -> None:
         return
 
     _llm = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
         google_api_key=api_key,
         temperature=0.4,
         max_output_tokens=1024,

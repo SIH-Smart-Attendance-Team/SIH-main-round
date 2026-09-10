@@ -17,12 +17,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -243,6 +246,18 @@ def create_app(
     except ImportError as exc:
         logger.warning("Could not import webhooks: %s", exc)
 
+    try:
+        from whatsapp_webhook import app as whatsapp_webhook_app
+        app.mount("/whatsapp", whatsapp_webhook_app)
+    except ImportError as exc:
+        logger.warning("Could not import whatsapp_webhook: %s", exc)
+
+    try:
+        from voice_webhook import app as voice_webhook_app
+        app.mount("/voice", voice_webhook_app)
+    except ImportError as exc:
+        logger.warning("Could not import voice_webhook: %s", exc)
+
     # ---- Startup / shutdown hooks ----------------------------------------
     @app.on_event("startup")
     async def _startup() -> None:
@@ -297,7 +312,7 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "app_factory:app",
+        "backend_app_factory:app",
         host="0.0.0.0",
         port=8000,
         reload=True,

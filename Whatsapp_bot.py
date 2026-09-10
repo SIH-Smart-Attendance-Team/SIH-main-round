@@ -30,7 +30,12 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 from AI_engine import generate_weather_advisory
 from language_manager import normalize_lang_code, get_bhashini_code
-from all_India_voice import speech_to_text, text_to_speech
+
+try:
+    from all_India_voice import speech_to_text, text_to_speech
+except ImportError:
+    speech_to_text = None
+    text_to_speech = None
 from voice_service import get_voice_service
 
 logger = logging.getLogger("whatsapp_bot")

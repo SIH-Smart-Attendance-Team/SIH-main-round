@@ -9,6 +9,7 @@ Includes in-memory TTL cache (15 min) and exponential-backoff retries.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 MARINE_URL = "https://marine-api.open-meteo.com/v1/marine"
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 
 CACHE_TTL_SECONDS = 15 * 60  # 15 minutes
 MAX_RETRIES = 4
@@ -35,11 +37,18 @@ BASE_BACKOFF = 0.5  # seconds
 class CurrentWeather(BaseModel):
     temperature: Optional[float] = None
     relative_humidity: Optional[float] = None
+    apparent_temperature: Optional[float] = None
     precipitation: Optional[float] = None
     wind_speed: Optional[float] = None
     wind_direction: Optional[float] = None
+    wind_gusts: Optional[float] = None
     weather_code: Optional[int] = None
     pressure_msl: Optional[float] = None
+    cloud_cover: Optional[float] = None
+    visibility: Optional[float] = None
+    dew_point_2m: Optional[float] = None
+    uv_index: Optional[float] = None
+    is_day: Optional[int] = None
     time: Optional[str] = None
 
 
@@ -200,7 +209,8 @@ class WeatherService:
     async def get_current_weather(self, lat: float, lon: float) -> Dict[str, Any]:
         """
         Returns temperature, relative humidity, wind speed, pressure,
-        and weather code for the given coordinates.
+        weather code, UV index, visibility, dew point, cloud cover,
+        wind gusts and feels-like temperature for the given coordinates.
         """
         params = {
             "latitude": lat,
@@ -209,11 +219,18 @@ class WeatherService:
                 [
                     "temperature_2m",
                     "relative_humidity_2m",
+                    "apparent_temperature",
                     "precipitation",
                     "wind_speed_10m",
                     "wind_direction_10m",
+                    "wind_gusts_10m",
                     "weather_code",
                     "pressure_msl",
+                    "cloud_cover",
+                    "visibility",
+                    "dew_point_2m",
+                    "uv_index",
+                    "is_day",
                 ]
             ),
             "timezone": "auto",
@@ -225,11 +242,18 @@ class WeatherService:
         return {
             "temperature": current.get("temperature_2m"),
             "relative_humidity": current.get("relative_humidity_2m"),
+            "apparent_temperature": current.get("apparent_temperature"),
             "precipitation": current.get("precipitation"),
             "wind_speed": current.get("wind_speed_10m"),
             "wind_direction": current.get("wind_direction_10m"),
+            "wind_gusts": current.get("wind_gusts_10m"),
             "weather_code": current.get("weather_code"),
             "pressure": current.get("pressure_msl"),
+            "cloud_cover": current.get("cloud_cover"),
+            "visibility": current.get("visibility"),
+            "dew_point_2m": current.get("dew_point_2m"),
+            "uv_index": current.get("uv_index"),
+            "is_day": current.get("is_day"),
             "time": current.get("time"),
             "latitude": data.get("latitude"),
             "longitude": data.get("longitude"),
@@ -275,7 +299,8 @@ class WeatherService:
     async def get_marine_metrics(self, lat: float, lon: float) -> Dict[str, Any]:
         """
         Fetches wave height, wave direction, swell, ocean surface temperature,
-        and wind gusts via the Marine API.
+        and wind gusts via Open-Meteo Marine API. Optionally enriches with
+        Storm Glass data if STORMGLASS_API_KEY is set.
         """
         params = {
             "latitude": lat,
@@ -287,10 +312,10 @@ class WeatherService:
                     "swell_wave_height",
                     "swell_wave_direction",
                     "sea_surface_temperature",
+                    "wave_period",
+                    "wave_peak_period",
                 ]
             ),
-            # Wind gusts come from the regular forecast endpoint; we request
-            # them together for convenience when possible.
             "timezone": "auto",
         }
         cache_key = f"marine:{lat:.4f}:{lon:.4f}"
@@ -315,17 +340,91 @@ class WeatherService:
         except Exception:
             gusts = None
 
-        return {
+        # Optionally enrich with Storm Glass data if API key is available
+        stormglass_data = None
+        stormglass_key = os.getenv("STORMGLASS_API_KEY")
+        if stormglass_key:
+            try:
+                stormglass_data = await self._fetch_stormglass_marine(lat, lon, stormglass_key)
+            except Exception:
+                stormglass_data = None
+
+        result = {
             "wave_height": current.get("wave_height"),
             "wave_direction": current.get("wave_direction"),
             "swell_wave_height": current.get("swell_wave_height"),
             "swell_wave_direction": current.get("swell_wave_direction"),
             "sea_surface_temperature": current.get("sea_surface_temperature"),
+            "wave_period": current.get("wave_period"),
+            "wave_peak_period": current.get("wave_peak_period"),
             "wind_gusts": gusts,
             "time": current.get("time"),
             "latitude": data.get("latitude"),
             "longitude": data.get("longitude"),
         }
+
+        # Merge Storm Glass data if available
+        if stormglass_data:
+            for key in ["wave_height", "wave_direction", "swell_wave_height", "sea_surface_temperature"]:
+                if result.get(key) is None and stormglass_data.get(key) is not None:
+                    result[key] = stormglass_data[key]
+            for key in ["wave_period", "wave_peak_period", "ocean_current", "water_temperature"]:
+                if stormglass_data.get(key) is not None:
+                    result[key] = stormglass_data[key]
+
+        return result
+
+    async def _fetch_stormglass_marine(
+        self, lat: float, lon: float, api_key: str
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch marine data from Storm Glass API (free tier available)."""
+        url = "https://api.stormglass.io/v2/weather/point"
+        params = {
+            "lat": lat,
+            "lng": lon,
+            "params": "waveHeight,waveDirection,wavePeriod,swellHeight,waterTemperature,currentSpeed,currentDirection",
+            "source": "sg",
+        }
+        headers = {"Authorization": api_key}
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, params=params, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    hours = data.get("hours", [{}])[0]
+                    return {
+                        "wave_height": hours.get("waveHeight", {}).get("sg"),
+                        "wave_direction": hours.get("waveDirection", {}).get("sg"),
+                        "wave_period": hours.get("wavePeriod", {}).get("sg"),
+                        "swell_wave_height": hours.get("swellHeight", {}).get("sg"),
+                        "water_temperature": hours.get("waterTemperature", {}).get("sg"),
+                        "ocean_current": hours.get("currentSpeed", {}).get("sg"),
+                    }
+        except Exception:
+            pass
+        return None
+
+    async def geocode(self, query: str, count: int = 5) -> List[Dict[str, Any]]:
+        """
+        Convert a city/place name into coordinates using Open-Meteo Geocoding.
+        Returns list of {name, country, admin1, latitude, longitude}.
+        """
+        params = {"name": query, "count": count, "language": "en"}
+        cache_key = f"geocode:{query.lower()}:{count}"
+        data = await self._request(GEOCODING_URL, params, cache_key=cache_key)
+        results = []
+        for item in data.get("results", []):
+            results.append(
+                {
+                    "name": item.get("name"),
+                    "country": item.get("country"),
+                    "admin1": item.get("admin1"),
+                    "latitude": item.get("latitude"),
+                    "longitude": item.get("longitude"),
+                }
+            )
+        return results
 
     # ------------------------------------------------------------------
     # Full forecast (current + hourly + daily for 7 days)
@@ -348,11 +447,18 @@ class WeatherService:
                 [
                     "temperature_2m",
                     "relative_humidity_2m",
+                    "apparent_temperature",
                     "precipitation",
                     "wind_speed_10m",
                     "wind_direction_10m",
+                    "wind_gusts_10m",
                     "weather_code",
                     "pressure_msl",
+                    "cloud_cover",
+                    "visibility",
+                    "dew_point_2m",
+                    "uv_index",
+                    "is_day",
                 ]
             ),
             "hourly": ",".join(
@@ -383,11 +489,18 @@ class WeatherService:
         current = CurrentWeather(
             temperature=cur.get("temperature_2m"),
             relative_humidity=cur.get("relative_humidity_2m"),
+            apparent_temperature=cur.get("apparent_temperature"),
             precipitation=cur.get("precipitation"),
             wind_speed=cur.get("wind_speed_10m"),
             wind_direction=cur.get("wind_direction_10m"),
+            wind_gusts=cur.get("wind_gusts_10m"),
             weather_code=cur.get("weather_code"),
             pressure_msl=cur.get("pressure_msl"),
+            cloud_cover=cur.get("cloud_cover"),
+            visibility=cur.get("visibility"),
+            dew_point_2m=cur.get("dew_point_2m"),
+            uv_index=cur.get("uv_index"),
+            is_day=cur.get("is_day"),
             time=cur.get("time"),
         )
 

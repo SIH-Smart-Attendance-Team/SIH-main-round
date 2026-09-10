@@ -6,18 +6,23 @@ Exposes REST endpoints backed by weather_service.py (Open-Meteo).
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, confloat
 
 from weather_service import WeatherService, get_weather_service
 from auth_db import init_db, create_user, get_user_by_email, get_user_by_id
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger("weathergpt.main")
 
@@ -117,11 +122,18 @@ class HealthResponse(BaseModel):
 class CurrentWeatherResponse(BaseModel):
     temperature: Optional[float] = Field(None, description="°C")
     relative_humidity: Optional[float] = Field(None, description="%")
+    apparent_temperature: Optional[float] = Field(None, description="Feels-like °C")
     precipitation: Optional[float] = Field(None, description="mm")
     wind_speed: Optional[float] = Field(None, description="km/h")
     wind_direction: Optional[float] = Field(None, description="degrees")
+    wind_gusts: Optional[float] = Field(None, description="km/h")
     weather_code: Optional[int] = None
     pressure: Optional[float] = Field(None, description="hPa")
+    cloud_cover: Optional[float] = Field(None, description="%")
+    visibility: Optional[float] = Field(None, description="m")
+    dew_point_2m: Optional[float] = Field(None, description="°C")
+    uv_index: Optional[float] = Field(None, description="0-11+")
+    is_day: Optional[int] = Field(None, description="1=day, 0=night")
     time: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -536,11 +548,18 @@ async def get_forecast(
             current = CurrentWeatherResponse(
                 temperature=forecast.current.temperature,
                 relative_humidity=forecast.current.relative_humidity,
+                apparent_temperature=forecast.current.apparent_temperature,
                 precipitation=forecast.current.precipitation,
                 wind_speed=forecast.current.wind_speed,
                 wind_direction=forecast.current.wind_direction,
+                wind_gusts=forecast.current.wind_gusts,
                 weather_code=forecast.current.weather_code,
                 pressure=forecast.current.pressure_msl,
+                cloud_cover=forecast.current.cloud_cover,
+                visibility=forecast.current.visibility,
+                dew_point_2m=forecast.current.dew_point_2m,
+                uv_index=forecast.current.uv_index,
+                is_day=forecast.current.is_day,
                 time=forecast.current.time,
             )
         daily = [
@@ -662,6 +681,37 @@ async def legacy_alerts(
     svc: WeatherService = Depends(get_weather_service),
 ):
     return await get_active_alerts(lat=lat, lon=lon, svc=svc)
+
+
+@app.get("/api/v1/weather/search")
+async def search_location(
+    q: str = Query(..., min_length=1),
+    count: int = Query(5, ge=1, le=10),
+    svc: WeatherService = Depends(get_weather_service),
+):
+    results = await svc.geocode(q, count=count)
+    return {"query": q, "results": results}
+
+
+@app.get("/api/v1/disaster/alerts")
+async def disaster_alerts(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    radius_km: float = Query(300.0),
+    days: int = Query(14, ge=1, le=30),
+):
+    """
+    Get disaster/hazard alerts near a location.
+
+    Sources:
+    - USGS earthquakes
+    - GDACS cyclones/floods/droughts/volcanoes
+    - Open-Meteo thunderstorm risk (modeled)
+
+    Returns GeoJSON-like features with severity colors.
+    """
+    from disaster_tools import get_disaster_alerts
+    return await get_disaster_alerts(latitude=lat, longitude=lon, radius_km=radius_km, days=days)
 
 
 # ---------------------------------------------------------------------------
@@ -807,3 +857,199 @@ async def get_text_advisory(
         "audio_url": "",
         "audio_base64": audio_b64,
     })
+
+
+# ---------------------------------------------------------------------------
+# Unified WeatherGPT Expert (replaces fragmented agent code)
+# ---------------------------------------------------------------------------
+
+try:
+    from weathergpt_expert import WeatherGPTExpert, get_expert
+
+    _expert = get_expert()
+
+    @app.get("/api/v1/expert/status", tags=["AI Expert"])
+    async def expert_status():
+        """Return expert agent health and capabilities."""
+        return _expert.status()
+
+    @app.post("/api/v1/expert/chat", tags=["AI Expert"])
+    async def expert_chat(
+        lat: float = Form(...),
+        lon: float = Form(...),
+        persona: str = Form("general"),
+        lang: str = Form("en"),
+        query: str = Form(...),
+        history_json: Optional[str] = Form(None),
+        location_name: Optional[str] = Form(None),
+    ):
+        """
+        Text chat with the WeatherGPT expert.
+
+        Supports:
+        - Conversation history
+        - Multi-language queries and replies
+        - Persona-aware responses (farmer, fisherman, urban_commuter, general)
+        - Live weather context
+        """
+        try:
+            history = json.loads(history_json) if history_json else []
+            result = await _expert.chat(
+                message=query,
+                history=history,
+                persona=persona,
+                language=lang,
+                latitude=lat,
+                longitude=lon,
+                location_name=location_name,
+            )
+            return JSONResponse(content={
+                "reply": result.get("reply", ""),
+                "history": result.get("history", []),
+                "language": result.get("language", lang),
+                "weather_available": result.get("weather_available", False),
+                "persona": result.get("persona", persona),
+            })
+        except Exception as exc:
+            logger.error("Expert chat failed: %s", exc)
+            return JSONResponse(
+                status_code=500,
+                content={"error": True, "detail": f"Expert unavailable: {exc}"},
+            )
+
+    @app.post("/api/v1/expert/chat/stream", tags=["AI Expert"])
+    async def expert_chat_stream(
+        lat: float = Form(...),
+        lon: float = Form(...),
+        persona: str = Form("general"),
+        lang: str = Form("en"),
+        query: str = Form(...),
+        history_json: Optional[str] = Form(None),
+        location_name: Optional[str] = Form(None),
+    ):
+        """
+        Streaming text chat with the WeatherGPT expert.
+        Returns Server-Sent Events with token chunks.
+        """
+        async def event_generator():
+            try:
+                history = json.loads(history_json) if history_json else []
+                async for chunk in _expert.chat_stream(
+                    message=query,
+                    history=history,
+                    persona=persona,
+                    language=lang,
+                    latitude=lat,
+                    longitude=lon,
+                    location_name=location_name,
+                ):
+                    yield f"data: {json.dumps(chunk)}\n\n"
+            except Exception as exc:
+                logger.error("Expert stream failed: %s", exc)
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            finally:
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.post("/api/v1/expert/voice", tags=["AI Expert"])
+    async def expert_voice(
+        lat: float = Form(...),
+        lon: float = Form(...),
+        persona: str = Form("general"),
+        lang: str = Form("en"),
+        audio: UploadFile = File(...),
+        history_json: Optional[str] = Form(None),
+        location_name: Optional[str] = Form(None),
+    ):
+        """
+        Voice chat with the WeatherGPT expert.
+
+        Pipeline: audio upload → ASR → text chat → TTS → audio response
+
+        Returns:
+        - transcript: What the user said
+        - reply: Expert's text response
+        - reply_audio: Base64-encoded TTS audio
+        """
+        try:
+            audio_bytes = await audio.read()
+            history = json.loads(history_json) if history_json else []
+            result = await _expert.voice_chat(
+                audio_bytes=audio_bytes,
+                audio_format=audio.content_type or "wav",
+                history=history,
+                persona=persona,
+                language=lang,
+                latitude=lat,
+                longitude=lon,
+                location_name=location_name,
+            )
+            return JSONResponse(content={
+                "transcript": result.get("transcript", ""),
+                "reply": result.get("reply", ""),
+                "reply_audio": base64.b64encode(result.get("reply_audio", b"")).decode("ascii") if result.get("reply_audio") else "",
+                "history": result.get("history", []),
+                "language": result.get("language", lang),
+                "persona": result.get("persona", persona),
+                "weather_available": result.get("weather_available", False),
+            })
+        except Exception as exc:
+            logger.error("Expert voice chat failed: %s", exc)
+            return JSONResponse(
+                status_code=500,
+                content={"error": True, "detail": f"Voice chat failed: {exc}"},
+            )
+
+    @app.post("/api/v1/expert/analyze", tags=["AI Expert"])
+    async def expert_analyze(
+        lat: float = Form(...),
+        lon: float = Form(...),
+        persona: str = Form("general"),
+        lang: str = Form("en"),
+        file: UploadFile = File(...),
+        prompt: Optional[str] = Form(None),
+        history_json: Optional[str] = Form(None),
+    ):
+        """
+        Analyze uploaded files (images, PDFs, CSVs) with the WeatherGPT expert.
+
+        Supports:
+        - Images: crop photos, weather radar, satellite imagery
+        - PDFs: weather reports, advisories
+        - CSVs: weather data logs
+
+        Returns expert analysis with weather context.
+        """
+        try:
+            file_bytes = await file.read()
+            content_type = file.content_type or "application/octet-stream"
+            history = json.loads(history_json) if history_json else []
+            result = await _expert.analyze_file(
+                file_bytes=file_bytes,
+                content_type=content_type,
+                filename=file.filename,
+                prompt=prompt,
+                persona=persona,
+                language=lang,
+                latitude=lat,
+                longitude=lon,
+                history=history,
+            )
+            return JSONResponse(content={
+                "reply": result.get("reply", ""),
+                "filename": file.filename,
+                "content_type": content_type,
+                "history": result.get("history", []),
+                "language": result.get("language", lang),
+                "weather_available": result.get("weather_available", False),
+            })
+        except Exception as exc:
+            logger.error("Expert file analysis failed: %s", exc)
+            return JSONResponse(
+                status_code=500,
+                content={"error": True, "detail": f"File analysis failed: {exc}"},
+            )
+
+except ImportError:
+    logger.info("weathergpt_expert not available – expert endpoints disabled")

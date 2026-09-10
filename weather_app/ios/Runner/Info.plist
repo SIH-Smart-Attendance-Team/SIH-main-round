@@ -66,5 +66,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>WeatherGPT needs microphone access for voice queries and weather advice.</string>
+ </dict>
 </plist>

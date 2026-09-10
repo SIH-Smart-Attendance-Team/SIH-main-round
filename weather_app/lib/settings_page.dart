@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_localizations.dart';
 import 'weather_service.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -34,9 +35,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _saveUrl() async {
     final url = _controller.text.trim();
+    final loc = AppLocalizations.of(context);
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid URL')),
+        SnackBar(content: Text(loc.pleaseEnterValidUrl)),
       );
       return;
     }
@@ -48,7 +50,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     if (parsed == null || !parsed.hasAbsolutePath || parsed.host.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid URL (e.g. http://192.168.1.100:8000)')),
+        SnackBar(content: Text(loc.pleaseEnterValidUrl)),
       );
       return;
     }
@@ -58,7 +60,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _savedUrl = url);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Backend URL saved')),
+        SnackBar(content: Text(loc.backendUrlSaved)),
       );
     }
   }
@@ -73,17 +75,18 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final loc = AppLocalizations.of(context);
 
     return Scaffold(
       backgroundColor: cs.surface,
       appBar: AppBar(
         backgroundColor: cs.surfaceContainerHigh,
-        title: Text('Settings', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+        title: Text(loc.settings, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
         centerTitle: false,
         actions: [
           TextButton(
             onPressed: _saveUrl,
-            child: Text('Save', style: TextStyle(color: cs.primary, fontWeight: FontWeight.w700)),
+            child: Text(loc.save, style: TextStyle(color: cs.primary, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -95,7 +98,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Text(
-                    'Backend Server',
+                    loc.backendServer,
                     style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -103,7 +106,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Text(
-                    'Enter the URL of your WeatherGPT backend server.',
+                    loc.backendUrlDescription,
                     style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                   ),
                 ),
@@ -113,7 +116,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: TextField(
                     controller: _controller,
                     decoration: InputDecoration(
-                      hintText: 'http://192.168.1.100:8000',
+                      hintText: loc.backendUrlHint,
                       border: const OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -126,7 +129,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Text(
-                      'Current: $_savedUrl',
+                      loc.current(_savedUrl),
                       style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                     ),
                   ),
