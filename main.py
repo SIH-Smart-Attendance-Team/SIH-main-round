@@ -241,6 +241,7 @@ class AlertDraftResponse(BaseModel):
     rejected_by: Optional[str] = None
     rejected_at: Optional[str] = None
     rejection_reason: Optional[str] = None
+    audit_log: list = Field(default_factory=list, description="Audit trail of draft actions")
 
 
 class AlertApprovalRequest(BaseModel):
@@ -916,6 +917,7 @@ def _serialize_alert_doc(alert: dict) -> dict:
         "rejected_by": alert.get("rejected_by"),
         "rejected_at": _iso(alert.get("rejected_at")),
         "rejection_reason": alert.get("rejection_reason"),
+        "audit_log": alert.get("audit_log", []),
     }
 
 

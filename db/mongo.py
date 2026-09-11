@@ -130,30 +130,30 @@ class MongoManager:
 
     async def _ensure_initialized(self) -> None:
         """Ensure the database is initialized."""
-        if not self._db:
+        if self._db is None:
             await self.initialize()
 
     @property
     def database(self) -> AsyncIOMotorDatabase:
-        if not self._db:
+        if self._db is None:
             raise RuntimeError("MongoDB not initialized. Call initialize() first.")
         return self._db
 
     @property
     def advisories(self) -> AsyncIOMotorCollection:
-        if not self._db:
+        if self._db is None:
             raise RuntimeError("MongoDB not initialized. Call initialize() first.")
         return self._db.advisories
 
     @property
     def bulletins(self) -> AsyncIOMotorCollection:
-        if not self._db:
+        if self._db is None:
             raise RuntimeError("MongoDB not initialized. Call initialize() first.")
         return self._db.bulletins
 
     @property
     def alerts(self) -> AsyncIOMotorCollection:
-        if not self._db:
+        if self._db is None:
             raise RuntimeError("MongoDB not initialized. Call initialize() first.")
         return self._db.alerts
 

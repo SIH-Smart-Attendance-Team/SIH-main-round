@@ -67,18 +67,19 @@ services:
   # Alternatively, can use the same Postgres instance with timescaledb extension
   # -------------------------------------------------------------------------
   timescaledb:
-    image: timescale/timescaledb-ha:pg16-latest
+    image: timescale/timescaledb:2.17.0-pg16
     container_name: weathergpt-timescaledb
     environment:
       POSTGRES_DB: weathergpt_ts
       POSTGRES_USER: weathergpt
       POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-weathergpt_dev_password}
+      POSTGRES_INITDB_ARGS: "--timescaledb-telemetry-enabled=false"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U weathergpt -d weathergpt_ts && psql -U weathergpt -d weathergpt_ts -c 'SELECT timescaledb_version()'"]
+      test: ["CMD-SHELL", "pg_isready -U weathergpt -d weathergpt_ts"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -165,7 +166,7 @@ services:
         reservations:
           memory: 128M
     # Run once and exit
-    command: ["alembic", "upgrade", "head"]
+    command: ["upgrade", "head"]
 
 volumes:
   postgres_data:
