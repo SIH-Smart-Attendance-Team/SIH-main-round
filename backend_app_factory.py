@@ -290,6 +290,14 @@ def create_app(
         except Exception:
             pass
 
+        # Start proactive disaster alert draft generator scheduler
+        try:
+            from alert_generator import get_alert_generator
+            await get_alert_generator().start()
+            logger.info("Alert generator scheduler started")
+        except Exception as exc:
+            logger.warning("Alert generator scheduler failed to start: %s", exc)
+
         # Initialize persistence layer (PostgreSQL + PostGIS, MongoDB, TimescaleDB)
         if _PERSISTENCE_AVAILABLE:
             try:
@@ -316,6 +324,14 @@ def create_app(
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         logger.info("WeatherGPT application shutting down")
+        # Stop proactive disaster alert draft generator scheduler
+        try:
+            from alert_generator import close_alert_generator
+            await close_alert_generator()
+            logger.info("Alert generator scheduler stopped")
+        except Exception as exc:
+            logger.warning("Error stopping alert generator: %s", exc)
+
         try:
             from weather_service import get_weather_service
             await get_weather_service().aclose()
