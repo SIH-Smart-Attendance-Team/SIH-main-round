@@ -14,12 +14,14 @@ Pipeline:
   3. Fetch & inject weather context
   4. Run LLM to generate advisory
   5. Translate advisory → target Indic language
+  6. Store advisory in MongoDB for reuse
 """
 
 from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -34,6 +36,18 @@ from language_manager import (
 from weather_service import WeatherService, get_weather_service
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# MongoDB persistence (lazy-loaded, graceful degradation)
+# ---------------------------------------------------------------------------
+try:
+    from db.mongo import get_mongo_manager
+    _MONGO_AVAILABLE = True
+except ImportError:
+    _MONGO_AVAILABLE = False
+
+import logging
+logger = logging.getLogger("weathergpt.ai_engine")
 
 # ---------------------------------------------------------------------------
 # Optional LangChain / Gemini imports (graceful degradation)
@@ -212,6 +226,7 @@ async def generate_weather_advisory(
     *,
     target_lang: Optional[str] = None,
     weather_svc: Optional[WeatherService] = None,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     """
     Full WeatherGPT pipeline.
@@ -223,6 +238,7 @@ async def generate_weather_advisory(
     3. Inject live weather context
     4. Generate English advisory with Gemini
     5. Translate advisory → target Indic language
+    6. Store advisory in MongoDB for reuse
 
     Parameters
     ----------
@@ -236,17 +252,51 @@ async def generate_weather_advisory(
         Language for the final reply. Defaults to source_lang.
     weather_svc : WeatherService, optional
         Injected service instance (useful for testing).
+    use_cache : bool, optional
+        Whether to check MongoDB for recent cached advisories (default True).
 
     Returns
     -------
     dict with keys:
         original_text, cleaned_text, english_query,
         weather_context, english_advisory, native_advisory,
-        source_lang, target_lang
+        source_lang, target_lang, cached (bool)
     """
     svc = weather_svc or get_weather_service()
     src = normalize_lang_code(source_lang)
     tgt = normalize_lang_code(target_lang or source_lang)
+
+    # ------------------------------------------------------------------
+    # Check MongoDB for recent cached advisory (if enabled)
+    # ------------------------------------------------------------------
+    if use_cache and _MONGO_AVAILABLE:
+        try:
+            mongo = get_mongo_manager()
+            await mongo.initialize()
+            cached = await mongo.find_recent_advisory(
+                lat=lat,
+                lon=lon,
+                source_lang=src,
+                target_lang=tgt,
+                max_age_minutes=60,
+            )
+            if cached:
+                logger.info("Returning cached advisory from MongoDB")
+                return {
+                    "original_text": user_text,
+                    "cleaned_text": cached.get("user_query", ""),
+                    "english_query": cached.get("english_query", ""),
+                    "weather_context": cached.get("weather_context", ""),
+                    "english_advisory": cached.get("english_advisory", ""),
+                    "native_advisory": cached.get("native_advisory", ""),
+                    "source_lang": src,
+                    "target_lang": tgt,
+                    "bhashini_source": get_bhashini_code(src),
+                    "bhashini_target": get_bhashini_code(tgt),
+                    "cached": True,
+                }
+        except Exception as exc:
+            logger.warning("MongoDB cache lookup failed, continuing with live generation: %s", exc)
 
     # ------------------------------------------------------------------
     # 1 + 2  Code-mixed handling & translation to English
@@ -282,7 +332,7 @@ async def generate_weather_advisory(
         else:
             native_advisory = re.sub(r"^\[[^\]]+←en\]\s*", "", native_advisory).strip()
 
-    return {
+    result = {
         "original_text": user_text,
         "cleaned_text": cleaned,
         "english_query": english_query,
@@ -293,7 +343,44 @@ async def generate_weather_advisory(
         "target_lang": tgt,
         "bhashini_source": get_bhashini_code(src),
         "bhashini_target": get_bhashini_code(tgt),
+        "cached": False,
     }
+
+    # ------------------------------------------------------------------
+    # 6  Store advisory in MongoDB (fire-and-forget)
+    # ------------------------------------------------------------------
+    if _MONGO_AVAILABLE:
+        try:
+            mongo = get_mongo_manager()
+            # Get location_id from Postgres if available
+            location_id = None
+            try:
+                from db.postgres import get_postgres_manager
+                pg = get_postgres_manager()
+                await pg.initialize()
+                location = await pg.get_location_by_name(f"{lat:.4f},{lon:.4f}")
+                if location:
+                    location_id = location.id
+            except Exception:
+                pass
+
+            await mongo.store_advisory(
+                location_id=location_id,
+                lat=lat,
+                lon=lon,
+                source_lang=src,
+                target_lang=tgt,
+                user_query=user_text,
+                english_query=english_query,
+                weather_context=weather_ctx,
+                english_advisory=english_advisory,
+                native_advisory=native_advisory,
+                raw_result=result,
+            )
+        except Exception as exc:
+            logger.warning("Failed to store advisory in MongoDB: %s", exc)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
