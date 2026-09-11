@@ -4,18 +4,37 @@ weather_service.py
 Asynchronous weather service using httpx and the free Open-Meteo APIs.
 Provides current weather, 7-day forecasts, agricultural metrics, and marine data.
 Includes in-memory TTL cache (15 min) and exponential-backoff retries.
+
+Persistence layer (Layer 2):
+- PostgreSQL + PostGIS: forecast_snapshots table
+- TimescaleDB: forecast_observations hypertable
+- Graceful degradation: if DBs are down, continue with live API calls only
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Persistence imports (lazy-loaded to avoid hard dependency at import time)
+# ---------------------------------------------------------------------------
+try:
+    from db.postgres import get_postgres_manager
+    from db.timescale import get_timescale_manager
+    _PERSISTENCE_AVAILABLE = True
+except ImportError:
+    _PERSISTENCE_AVAILABLE = False
+
+logger = logging.getLogger("weathergpt.weather_service")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -155,6 +174,8 @@ class WeatherService:
         self._client = client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
         self._cache = AsyncTTLCache(ttl=cache_ttl)
+        self._pg_manager = None
+        self._ts_manager = None
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -165,6 +186,170 @@ class WeatherService:
 
     async def __aexit__(self, *exc: Any) -> None:
         await self.aclose()
+
+    # ------------------------------------------------------------------
+    # Persistence helpers (graceful degradation)
+    # ------------------------------------------------------------------
+
+    async def _get_pg_manager(self):
+        """Get Postgres manager with lazy initialization and error handling."""
+        if not _PERSISTENCE_AVAILABLE:
+            return None
+        if self._pg_manager is None:
+            try:
+                self._pg_manager = get_postgres_manager()
+                await self._pg_manager.initialize()
+            except Exception as exc:
+                logger.warning("PostgreSQL unavailable, continuing without persistence: %s", exc)
+                self._pg_manager = None
+        return self._pg_manager
+
+    async def _get_ts_manager(self):
+        """Get TimescaleDB manager with lazy initialization and error handling."""
+        if not _PERSISTENCE_AVAILABLE:
+            return None
+        if self._ts_manager is None:
+            try:
+                self._ts_manager = get_timescale_manager()
+                await self._ts_manager.initialize()
+            except Exception as exc:
+                logger.warning("TimescaleDB unavailable, continuing without persistence: %s", exc)
+                self._ts_manager = None
+        return self._ts_manager
+
+    async def _persist_current_weather(
+        self, lat: float, lon: float, data: Dict[str, Any]
+    ) -> None:
+        """Persist current weather to PostgreSQL and TimescaleDB (fire-and-forget)."""
+        pg = await self._get_pg_manager()
+        ts = await self._get_ts_manager()
+        if not pg and not ts:
+            return
+
+        location_name = f"{lat:.4f},{lon:.4f}"
+        try:
+            if pg:
+                location = await pg.upsert_location(location_name, lat, lon)
+                current = data.get("current", {})
+                await pg.add_forecast_snapshot(
+                    location_id=location.id,
+                    raw_json=data,
+                    temp=current.get("temperature_2m"),
+                    precip=current.get("precipitation"),
+                    wind=current.get("wind_speed_10m"),
+                    source="open-meteo",
+                )
+            if ts:
+                current = data.get("current", {})
+                await ts.insert_observation(
+                    time=datetime.fromisoformat(current.get("time").replace("Z", "+00:00"))
+                    if current.get("time")
+                    else datetime.now(timezone.utc),
+                    lat=lat,
+                    lon=lon,
+                    temperature=current.get("temperature_2m"),
+                    relative_humidity=current.get("relative_humidity_2m"),
+                    precipitation=current.get("precipitation"),
+                    wind_speed=current.get("wind_speed_10m"),
+                    wind_direction=current.get("wind_direction_10m"),
+                    pressure=current.get("pressure_msl"),
+                    weather_code=current.get("weather_code"),
+                    source="open-meteo",
+                    raw_json=data,
+                    location_id=location.id if pg else None,
+                )
+        except Exception as exc:
+            logger.warning("Failed to persist current weather: %s", exc)
+
+    async def _persist_forecast(
+        self, lat: float, lon: float, data: Dict[str, Any]
+    ) -> None:
+        """Persist forecast data to PostgreSQL and TimescaleDB (fire-and-forget)."""
+        pg = await self._get_pg_manager()
+        ts = await self._get_ts_manager()
+        if not pg and not ts:
+            return
+
+        location_name = f"{lat:.4f},{lon:.4f}"
+        try:
+            if pg:
+                location = await pg.upsert_location(location_name, lat, lon)
+                await pg.add_forecast_snapshot(
+                    location_id=location.id,
+                    raw_json=data,
+                    source="open-meteo",
+                )
+            if ts:
+                # Insert hourly observations into TimescaleDB
+                hourly_raw = data.get("hourly", {})
+                h_times = hourly_raw.get("time", [])
+                observations = []
+                for i, t in enumerate(h_times):
+                    observations.append({
+                        "time": datetime.fromisoformat(t.replace("Z", "+00:00")) if t else datetime.now(timezone.utc),
+                        "lat": lat,
+                        "lon": lon,
+                        "temperature": _safe_index(hourly_raw.get("temperature_2m"), i),
+                        "precipitation": _safe_index(hourly_raw.get("precipitation"), i),
+                        "relative_humidity": None,  # Not in hourly by default
+                        "wind_speed": None,
+                        "wind_direction": None,
+                        "pressure": None,
+                        "weather_code": _safe_index(hourly_raw.get("weather_code"), i),
+                        "source": "open-meteo",
+                        "raw_json": data,
+                        "location_id": location.id if pg else None,
+                    })
+                if observations:
+                    await ts.insert_observations_batch(observations)
+        except Exception as exc:
+            logger.warning("Failed to persist forecast: %s", exc)
+
+    async def _persist_agri_metrics(
+        self, lat: float, lon: float, data: Dict[str, Any]
+    ) -> None:
+        """Persist agricultural metrics to PostgreSQL (fire-and-forget)."""
+        pg = await self._get_pg_manager()
+        if not pg:
+            return
+
+        location_name = f"{lat:.4f},{lon:.4f}"
+        try:
+            location = await pg.upsert_location(location_name, lat, lon)
+            current = data.get("current", {})
+            await pg.add_forecast_snapshot(
+                location_id=location.id,
+                raw_json=data,
+                temp=current.get("soil_temperature_0_to_7cm"),
+                precip=current.get("soil_moisture_0_to_7cm"),
+                wind=None,
+                source="open-meteo-agri",
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist agri metrics: %s", exc)
+
+    async def _persist_marine_metrics(
+        self, lat: float, lon: float, data: Dict[str, Any]
+    ) -> None:
+        """Persist marine metrics to PostgreSQL (fire-and-forget)."""
+        pg = await self._get_pg_manager()
+        if not pg:
+            return
+
+        location_name = f"{lat:.4f},{lon:.4f}"
+        try:
+            location = await pg.upsert_location(location_name, lat, lon)
+            current = data.get("current", {})
+            await pg.add_forecast_snapshot(
+                location_id=location.id,
+                raw_json=data,
+                temp=current.get("sea_surface_temperature"),
+                precip=None,
+                wind=current.get("wind_gusts_10m"),
+                source="open-meteo-marine",
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist marine metrics: %s", exc)
 
     # ------------------------------------------------------------------
     # Low-level request helper with exponential backoff
@@ -239,7 +424,7 @@ class WeatherService:
         data = await self._request(FORECAST_URL, params, cache_key=cache_key)
 
         current = data.get("current", {})
-        return {
+        result = {
             "temperature": current.get("temperature_2m"),
             "relative_humidity": current.get("relative_humidity_2m"),
             "apparent_temperature": current.get("apparent_temperature"),
@@ -259,6 +444,11 @@ class WeatherService:
             "longitude": data.get("longitude"),
             "timezone": data.get("timezone"),
         }
+
+        # Persist to database (fire-and-forget, don't block on failure)
+        asyncio.create_task(self._persist_current_weather(lat, lon, data))
+
+        return result
 
     async def get_agricultural_metrics(self, lat: float, lon: float) -> Dict[str, Any]:
         """
@@ -284,7 +474,7 @@ class WeatherService:
         data = await self._request(FORECAST_URL, params, cache_key=cache_key)
 
         current = data.get("current", {})
-        return {
+        result = {
             "et0_fao_evapotranspiration": current.get("et0_fao_evapotranspiration"),
             "soil_temperature_0_to_7cm": current.get("soil_temperature_0_to_7cm"),
             "soil_temperature_7_to_28cm": current.get("soil_temperature_7_to_28cm"),
@@ -295,6 +485,11 @@ class WeatherService:
             "latitude": data.get("latitude"),
             "longitude": data.get("longitude"),
         }
+
+        # Persist to database (fire-and-forget, don't block on failure)
+        asyncio.create_task(self._persist_agri_metrics(lat, lon, data))
+
+        return result
 
     async def get_marine_metrics(self, lat: float, lon: float) -> Dict[str, Any]:
         """
@@ -372,6 +567,9 @@ class WeatherService:
                 if stormglass_data.get(key) is not None:
                     result[key] = stormglass_data[key]
 
+        # Persist to database (fire-and-forget, don't block on failure)
+        asyncio.create_task(self._persist_marine_metrics(lat, lon, data))
+
         return result
 
     async def _fetch_stormglass_marine(
@@ -425,7 +623,6 @@ class WeatherService:
                 }
             )
         return results
-
     # ------------------------------------------------------------------
     # Full forecast (current + hourly + daily for 7 days)
     # ------------------------------------------------------------------
@@ -539,7 +736,7 @@ class WeatherService:
                 )
             )
 
-        return ForecastResponse(
+        result = ForecastResponse(
             latitude=data.get("latitude", lat),
             longitude=data.get("longitude", lon),
             timezone=data.get("timezone"),
@@ -547,6 +744,11 @@ class WeatherService:
             daily=daily,
             hourly=hourly,
         )
+
+        # Persist to database (fire-and-forget, don't block on failure)
+        asyncio.create_task(self._persist_forecast(lat, lon, data))
+
+        return result
 
 
 # ---------------------------------------------------------------------------
