@@ -194,8 +194,91 @@ async def _generate_advisory_english(query: str, weather_context: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Multilingual fallback advisories (used when LLM is unavailable)
+# Alert draft generation — short SMS/radio-script warnings
 # ---------------------------------------------------------------------------
+
+async def generate_alert_draft(
+    event: Dict[str, Any],
+    language: str,
+    *,
+    llm: Optional[Any] = None,
+) -> str:
+    """
+    Generate a short, localized warning draft for a disaster event.
+
+    Uses the distinct ALERT_DRAFT_PROMPT from system_prompt.py (short,
+    SMS/radio-script length) rather than the conversational advisory prompt.
+    Falls back to a deterministic template when the LLM is unavailable.
+
+    Args:
+        event: normalized disaster event dict from disaster_tools.py
+        language: target language (name, ISO, Bhashini or FLORES code)
+        llm: optional injected LLM chain for testing
+
+    Returns:
+        Short warning text in the target language, or "" when severity is green.
+    """
+    from language_manager import normalize_lang_code
+    from system_prompt import ALERT_DRAFT_PROMPT
+
+    severity = str(event.get("severity", "green")).lower()
+    if severity == "green":
+        return ""
+
+    lang = normalize_lang_code(language)
+    event_title = event.get("title", "")
+    hazard_type = event.get("hazard_type", "unknown")
+    latitude = event.get("latitude")
+    longitude = event.get("longitude")
+    event_time = event.get("event_time") or "unknown"
+    source = event.get("source", "unknown")
+    description = event.get("description", "")
+
+    prompt_text = ALERT_DRAFT_PROMPT.format(
+        event_title=event_title,
+        hazard_type=hazard_type,
+        severity=severity,
+        latitude=latitude,
+        longitude=longitude,
+        event_time=event_time,
+        source=source,
+        description=description,
+        language=lang,
+    )
+
+    # Use the existing Gemini LLM stack if configured
+    if llm is None and _llm is not None and _prompt is not None:
+        try:
+            chain = _prompt | _llm | StrOutputParser()
+            result = await chain.ainvoke(
+                {
+                    "query": prompt_text,
+                    "weather_context": (
+                        f"Disaster event context: {event_title}. "
+                        f"{description}"
+                    ),
+                }
+            )
+            draft = result.strip()
+            if draft:
+                return draft[:500]
+        except Exception as exc:
+            logger.warning("Alert draft LLM generation failed: %s", exc)
+
+    # Deterministic fallback — never blocks the scheduler on LLM failure
+    fallback = (
+        f"{severity.upper()} alert: {event_title}. "
+        f"Affected area near lat {latitude}, lon {longitude}. "
+        f"Source: {source}. {description} "
+        "Take immediate protective action and check official IMD/NDMA updates."
+    )
+    if lang != "english":
+        from language_manager import translate_to_native
+
+        translated = translate_to_native(fallback, lang)
+        if translated and not translated.startswith("["):
+            return translated[:500]
+    return fallback[:500]
 
 _MULTILINGUAL_FALLBACKS = {
     "hindi": "आज का मौसम सामान्य रहेगा। सुरक्षित रहें और आधिकारिक IMD/NDMA स्रोतों की जाँच करें।",

@@ -5,6 +5,7 @@ Exposes REST endpoints backed by weather_service.py (Open-Meteo).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -213,6 +214,45 @@ class AlertsResponse(BaseModel):
     active_alerts: List[AlertItem]
     overall_level: AlertLevel
     timestamp: str
+
+
+# ---------------------------------------------------------------------------
+# Drafted alert request / response models (human approval workflow)
+# ---------------------------------------------------------------------------
+
+class AlertDraftResponse(BaseModel):
+    id: str
+    event_id: str
+    event_fingerprint: str
+    language: str
+    script_text: str
+    severity: str
+    hazard_type: str
+    title: str
+    description: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    source: str
+    event_time: Optional[str] = None
+    change_type: str
+    delivery_status: str
+    generated_at: str
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    rejected_by: Optional[str] = None
+    rejected_at: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    audit_log: list = Field(default_factory=list, description="Audit trail of draft actions")
+    delivery_results: list = Field(default_factory=list, description="Per-channel delivery status per user (populated after dispatch)")
+
+
+class AlertApprovalRequest(BaseModel):
+    approved_by: str = Field(..., min_length=1, description="Human reviewer identity")
+
+
+class AlertRejectionRequest(BaseModel):
+    rejected_by: str = Field(..., min_length=1, description="Human reviewer identity")
+    reason: Optional[str] = Field(None, description="Optional rejection reason")
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +752,182 @@ async def disaster_alerts(
     """
     from disaster_tools import get_disaster_alerts
     return await get_disaster_alerts(latitude=lat, longitude=lon, radius_km=radius_km, days=days)
+
+
+# ---------------------------------------------------------------------------
+# Drafted alert endpoints (human approval required before delivery)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/api/v1/alerts/drafted",
+    response_model=List[AlertDraftResponse],
+    tags=["Alerts"],
+    summary="List drafted disaster warning alerts pending human review",
+)
+async def list_draft_alerts(
+    delivery_status: Optional[str] = Query(None, description="draft | approved | rejected"),
+    severity: Optional[str] = Query(None, description="green | yellow | orange | red"),
+    language: Optional[str] = Query(None, description="Target language"),
+    event_id: Optional[str] = Query(None, description="Filter by source event ID"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """
+    List drafted disaster warning alerts.
+
+    Nothing is auto-sent. Every draft requires human approval before Layer 4
+    delivery channels may dispatch it.
+    """
+    try:
+        from db.mongo import get_mongo_manager
+
+        mongo = get_mongo_manager()
+        await mongo.initialize()
+        alerts = await mongo.get_draft_alerts(
+            delivery_status=delivery_status,
+            severity=severity,
+            language=language,
+            event_id=event_id,
+            limit=limit,
+        )
+        return [_serialize_alert_doc(a) for a in alerts]
+    except Exception as exc:
+        logger.warning("Failed to list drafted alerts: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Alert store unavailable: {exc}",
+        ) from exc
+
+
+@app.post(
+    "/api/v1/alerts/{alert_id}/approve",
+    response_model=AlertDraftResponse,
+    tags=["Alerts"],
+    summary="Approve a drafted alert for delivery",
+)
+async def approve_alert(
+    alert_id: str,
+    payload: AlertApprovalRequest,
+):
+    """
+    Human approval step for a drafted alert.
+
+    Marks the alert as approved and records who approved it and when.
+    Layer 4 delivery channels should only dispatch alerts with
+    delivery_status == 'approved'.
+    """
+    try:
+        from db.mongo import get_mongo_manager
+
+        mongo = get_mongo_manager()
+        await mongo.initialize()
+        alert = await mongo.approve_alert(alert_id, payload.approved_by)
+        if alert is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Alert not found",
+            )
+        logger.info(
+            "Alert %s approved by %s (event_id=%s)",
+            alert_id,
+            payload.approved_by,
+            alert.get("event_id"),
+        )
+        # Trigger Layer 4 broadcast as a background task — the alert is now
+        # approved, so fan it out to all affected users via their preferred
+        # channel (WhatsApp / SMS / IVR).
+        from alert_dispatcher import dispatch_approved_alert as _dispatch
+
+        asyncio.create_task(_dispatch(alert_id))
+
+        return _serialize_alert_doc(alert)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to approve alert %s: %s", alert_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Alert store unavailable: {exc}",
+        ) from exc
+
+
+@app.post(
+    "/api/v1/alerts/{alert_id}/reject",
+    response_model=AlertDraftResponse,
+    tags=["Alerts"],
+    summary="Reject a drafted alert",
+)
+async def reject_alert(
+    alert_id: str,
+    payload: AlertRejectionRequest,
+):
+    """
+    Human rejection step for a drafted alert.
+
+    Marks the alert as rejected, records who rejected it, when, and why.
+    Rejected alerts must never be delivered by Layer 4.
+    """
+    try:
+        from db.mongo import get_mongo_manager
+
+        mongo = get_mongo_manager()
+        await mongo.initialize()
+        alert = await mongo.reject_alert(alert_id, payload.rejected_by, payload.reason)
+        if alert is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Alert not found",
+            )
+        logger.info(
+            "Alert %s rejected by %s (event_id=%s, reason=%s)",
+            alert_id,
+            payload.rejected_by,
+            alert.get("event_id"),
+            payload.reason or "-",
+        )
+        return _serialize_alert_doc(alert)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to reject alert %s: %s", alert_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Alert store unavailable: {exc}",
+        ) from exc
+
+
+def _serialize_alert_doc(alert: dict) -> dict:
+    """Convert a Mongo alert document to the API response shape."""
+    def _iso(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
+
+    return {
+        "id": str(alert.get("_id", "")),
+        "event_id": alert.get("event_id", ""),
+        "event_fingerprint": alert.get("event_fingerprint", ""),
+        "language": alert.get("language", ""),
+        "script_text": alert.get("script_text", ""),
+        "severity": alert.get("severity", ""),
+        "hazard_type": alert.get("hazard_type", ""),
+        "title": alert.get("title", ""),
+        "description": alert.get("description", ""),
+        "latitude": alert.get("latitude"),
+        "longitude": alert.get("longitude"),
+        "source": alert.get("source", ""),
+        "event_time": _iso(alert.get("event_time")),
+        "change_type": alert.get("change_type", "new"),
+        "delivery_status": alert.get("delivery_status", "draft"),
+        "generated_at": _iso(alert.get("generated_at")),
+        "approved_by": alert.get("approved_by"),
+        "approved_at": _iso(alert.get("approved_at")),
+        "rejected_by": alert.get("rejected_by"),
+        "rejected_at": _iso(alert.get("rejected_at")),
+        "rejection_reason": alert.get("rejection_reason"),
+        "audit_log": alert.get("audit_log", []),
+    }
 
 
 # ---------------------------------------------------------------------------

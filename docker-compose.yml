@@ -67,18 +67,19 @@ services:
   # Alternatively, can use the same Postgres instance with timescaledb extension
   # -------------------------------------------------------------------------
   timescaledb:
-    image: timescale/timescaledb-ha:pg16-latest
+    image: timescale/timescaledb:2.17.0-pg16
     container_name: weathergpt-timescaledb
     environment:
       POSTGRES_DB: weathergpt_ts
       POSTGRES_USER: weathergpt
       POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-weathergpt_dev_password}
+      POSTGRES_INITDB_ARGS: "--timescaledb-telemetry-enabled=false"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U weathergpt -d weathergpt_ts && psql -U weathergpt -d weathergpt_ts -c 'SELECT timescaledb_version()'"]
+      test: ["CMD-SHELL", "pg_isready -U weathergpt -d weathergpt_ts"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -108,13 +109,22 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
-      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
-      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+       - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+       - TWILIO_NUMBER=${TWILIO_NUMBER}
+       - TWILIO_WHATSAPP_NUMBER=${TWILIO_WHATSAPP_NUMBER}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       - DEFAULT_LAT=${DEFAULT_LAT:-28.61}
       - DEFAULT_LON=${DEFAULT_LON:-77.21}
       - DEFAULT_WHATSAPP_LANG=${DEFAULT_WHATSAPP_LANG:-hi}
       - MEDIA_DIR=/tmp/weathergpt_media
+      - ALERT_POLL_INTERVAL_SECONDS=${ALERT_POLL_INTERVAL_SECONDS:-900}
+      - ALERT_LANGUAGES=${ALERT_LANGUAGES:-english,hindi}
+      - ALERT_POLL_LAT=${ALERT_POLL_LAT:-28.61}
+      - ALERT_POLL_LON=${ALERT_POLL_LON:-77.21}
+      - ALERT_POLL_RADIUS_KM=${ALERT_POLL_RADIUS_KM:-2000}
+      - ALERT_POLL_DAYS=${ALERT_POLL_DAYS:-14}
+      - ALERT_MAX_DRAFTS_PER_CYCLE=${ALERT_MAX_DRAFTS_PER_CYCLE:-20}
     ports:
       - "8000:8000"
     depends_on:
@@ -158,7 +168,7 @@ services:
         reservations:
           memory: 128M
     # Run once and exit
-    command: ["alembic", "upgrade", "head"]
+    command: ["upgrade", "head"]
 
 volumes:
   postgres_data:
