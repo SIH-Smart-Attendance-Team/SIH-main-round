@@ -5,6 +5,7 @@ Exposes REST endpoints backed by weather_service.py (Open-Meteo).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -242,6 +243,7 @@ class AlertDraftResponse(BaseModel):
     rejected_at: Optional[str] = None
     rejection_reason: Optional[str] = None
     audit_log: list = Field(default_factory=list, description="Audit trail of draft actions")
+    delivery_results: list = Field(default_factory=list, description="Per-channel delivery status per user (populated after dispatch)")
 
 
 class AlertApprovalRequest(BaseModel):
@@ -830,6 +832,13 @@ async def approve_alert(
             payload.approved_by,
             alert.get("event_id"),
         )
+        # Trigger Layer 4 broadcast as a background task — the alert is now
+        # approved, so fan it out to all affected users via their preferred
+        # channel (WhatsApp / SMS / IVR).
+        from alert_dispatcher import dispatch_approved_alert as _dispatch
+
+        asyncio.create_task(_dispatch(alert_id))
+
         return _serialize_alert_doc(alert)
     except HTTPException:
         raise

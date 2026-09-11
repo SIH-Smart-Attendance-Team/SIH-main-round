@@ -448,6 +448,67 @@ class MongoManager:
             return await self.get_alert_by_id(alert_id)
         return await self.get_alert_by_id(alert_id)
 
+    async def record_delivery_results(
+        self,
+        alert_id: str,
+        results: list[dict],
+    ) -> Optional[dict]:
+        """
+        Record per-channel delivery status for an approved alert.
+
+        Called by alert_dispatcher.py after the fan-out completes.
+        Appends to the delivery_results array and pushes audit entries.
+        """
+        from bson import ObjectId
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        try:
+            oid = ObjectId(alert_id)
+        except Exception:
+            return None
+
+        # Build per-channel status summary
+        channel_status = {}
+        for r in results:
+            ch = r.get("channel", "unknown")
+            if ch not in channel_status:
+                channel_status[ch] = {"sent": 0, "failed": 0}
+            if r.get("success"):
+                channel_status[ch]["sent"] += 1
+            else:
+                channel_status[ch]["failed"] += 1
+
+        total_sent = sum(v["sent"] for v in channel_status.values())
+        total_failed = sum(v["failed"] for v in channel_status.values())
+
+        update_doc = {"$set": {"updated_at": now}}
+
+        # Push both delivery_results and audit_log entries in one atomic update
+        update_doc["$push"] = {
+            "delivery_results": {"$each": results},
+            "audit_log": {
+                "action": "dispatched",
+                "actor": "alert_dispatcher",
+                "timestamp": now,
+                "detail": f"sent={total_sent} failed={total_failed} channels={list(channel_status.keys())}",
+            },
+        }
+
+        # Set the dispatched status and summary
+        update_doc["$set"].update({
+            "delivery_status": "dispatched",
+            "dispatched_at": now,
+            "dispatched_summary": {
+                "total_sent": total_sent,
+                "total_failed": total_failed,
+                "channels": channel_status,
+            },
+        })
+
+        await self.alerts.update_one({"_id": oid}, update_doc)
+        return await self.get_alert_by_id(alert_id)
+
 
 _mongo_manager: Optional[MongoManager] = None
 

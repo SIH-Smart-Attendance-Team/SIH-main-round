@@ -269,6 +269,20 @@ def create_app(
     except ImportError as exc:
         logger.warning("Could not import voice_webhook: %s", exc)
 
+    try:
+        from sms_webhook import app as sms_webhook_app
+        app.mount("/sms", sms_webhook_app)
+        logger.info("SMS webhook mounted at /sms/*")
+    except ImportError as exc:
+        logger.warning("Could not import sms_webhook: %s", exc)
+
+    try:
+        from alert_dispatcher import get_alert_dispatcher
+        get_alert_dispatcher()
+        logger.info("Alert dispatcher initialised")
+    except ImportError as exc:
+        logger.warning("Could not import alert_dispatcher: %s", exc)
+
     # ---- Startup / shutdown hooks ----------------------------------------
     @app.on_event("startup")
     async def _startup() -> None:
