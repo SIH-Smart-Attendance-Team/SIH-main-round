@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: weathergpt
+namespace: weathergpt
+
+resources:
+  - 00-namespace.yaml
+  - 01-config.yaml
+  - 02-postgres.yaml
+  - 03-mongo.yaml
+  - 04-timescaledb.yaml
+  - 05-backend.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  project: weathergpt
+  layer: backend

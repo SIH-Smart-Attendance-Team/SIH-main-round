@@ -1,0 +1,30 @@
+# Non-sensitive environment variables for WeatherGPT backend
+# Secrets are defined in 00-secrets.yaml and referenced via valueFrom.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weathergpt-config
+  namespace: weathergpt
+data:
+  PUBLIC_BASE_URL: "https://weathergpt.example.com"
+  DEFAULT_LAT: "28.61"
+  DEFAULT_LON: "77.21"
+  DEFAULT_WHATSAPP_LANG: "hi"
+  DEFAULT_LANG: "en"
+  JWT_ALGORITHM: "HS256"
+  JWT_EXPIRY_HOURS: "24"
+  GEMINI_MODEL: "gemini-2.0-flash"
+  EXPERT_MAX_TOKENS: "2048"
+  EXPERT_TEMPERATURE: "0.4"
+  WHISPER_MODEL_SIZE: "base"
+  WEBHOOK_SECRET: "change-me"
+  MAX_DISPATCH_CONCURRENCY: "20"
+  ALERT_POLL_INTERVAL_SECONDS: "900"
+  ALERT_LANGUAGES: "english,hindi"
+  ALERT_POLL_LAT: "28.61"
+  ALERT_POLL_LON: "77.21"
+  ALERT_POLL_RADIUS_KM: "2000"
+  ALERT_POLL_DAYS: "14"
+  ALERT_MAX_DRAFTS_PER_CYCLE: "20"
+  MEDIA_DIR: "/tmp/weathergpt_media"

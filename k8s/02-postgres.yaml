@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weathergpt-postgres
+  namespace: weathergpt
+  labels:
+    app: weathergpt-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weathergpt-postgres
+  template:
+    metadata:
+      labels:
+        app: weathergpt-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgis/postgis:16-3.4
+          env:
+            - name: POSTGRES_DB
+              value: "weathergpt"
+            - name: POSTGRES_USER
+              value: "weathergpt"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: weathergpt-secrets
+                  key: POSTGRES_PASSWORD
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "weathergpt", "-d", "weathergpt"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "weathergpt", "-d", "weathergpt"]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: weathergpt-postgres-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: weathergpt-postgres-pvc
+  namespace: weathergpt
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weathergpt-postgres
+  namespace: weathergpt
+  labels:
+    app: weathergpt-postgres
+spec:
+  selector:
+    app: weathergpt-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP

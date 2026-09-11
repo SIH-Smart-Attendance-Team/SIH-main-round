@@ -1,0 +1,15 @@
+# Dev / CI dependencies for WeatherGPT
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.2
+
+# HTTP mocking for integration tests
+respx==0.22.0
+
+# Linting
+ruff==0.8.6
+
+# Type checking (optional, useful for IDE)
+# mypy==1.13.0

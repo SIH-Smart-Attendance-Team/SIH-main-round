@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint, test, build
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: weathergpt
+          POSTGRES_USER: weathergpt
+          POSTGRES_PASSWORD: weathergpt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U weathergpt -d weathergpt"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mongo:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_DATABASE: weathergpt
+          MONGO_INITDB_ROOT_USERNAME: weathergpt
+          MONGO_INITDB_ROOT_PASSWORD: weathergpt
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")' -u weathergpt -p weathergpt --authenticationDatabase admin"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Syntax check (py_compile)
+        run: |
+          find . -name "*.py" -not -path "./.venv/*" | xargs python -m py_compile
+
+      - name: Run linter (ruff)
+        run: ruff check .
+
+      - name: Run unit tests
+        env:
+          POSTGRES_URL: postgresql+asyncpg://weathergpt:weathergpt@localhost:5432/weathergpt
+          MONGO_URL: mongodb://weathergpt:weathergpt@localhost:27017/weathergpt?authSource=admin
+          JWT_SECRET: test-secret-key
+          GEMINI_MODEL: gemini-2.0-flash
+          PUBLIC_BASE_URL: http://localhost:8000
+          WEBHOOK_SECRET: test-webhook-secret
+          TWILIO_ACCOUNT_SID: test-sid
+          TWILIO_AUTH_TOKEN: test-token
+          TWILIO_NUMBER: "+1234567890"
+        run: |
+          pytest tests/ -v --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Docker build (verifies Dockerfile doesn't break)
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: weathergpt-backend:test
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Build & push to GHCR on merge to main
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Push to GHCR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+            type=raw,value=${{ github.sha }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

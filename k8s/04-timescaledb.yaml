@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weathergpt-timescaledb
+  namespace: weathergpt
+  labels:
+    app: weathergpt-timescaledb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weathergpt-timescaledb
+  template:
+    metadata:
+      labels:
+        app: weathergpt-timescaledb
+    spec:
+      containers:
+        - name: timescaledb
+          image: timescale/timescaledb:2.17.0-pg16
+          env:
+            - name: POSTGRES_DB
+              value: "weathergpt_ts"
+            - name: POSTGRES_USER
+              value: "weathergpt"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: weathergpt-secrets
+                  key: TIMESCALE_PASSWORD
+            - name: POSTGRES_INITDB_ARGS
+              value: "--timescaledb-telemetry-enabled=false"
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: timescale-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "weathergpt", "-d", "weathergpt_ts"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "weathergpt", "-d", "weathergpt_ts"]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+      volumes:
+        - name: timescale-data
+          persistentVolumeClaim:
+            claimName: weathergpt-timescaledb-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: weathergpt-timescaledb-pvc
+  namespace: weathergpt
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weathergpt-timescaledb
+  namespace: weathergpt
+  labels:
+    app: weathergpt-timescaledb
+spec:
+  selector:
+    app: weathergpt-timescaledb
+  ports:
+    - name: timescale
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
