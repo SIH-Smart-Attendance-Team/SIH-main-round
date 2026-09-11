@@ -1,0 +1,175 @@
+version: "3.8"
+
+services:
+  # -------------------------------------------------------------------------
+  # PostgreSQL + PostGIS - Structured geo-tagged data
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: weathergpt-postgres
+    environment:
+      POSTGRES_DB: weathergpt
+      POSTGRES_USER: weathergpt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weathergpt_dev_password}
+      # Enable TimescaleDB extension on the same instance (optional)
+      # POSTGRES_EXTENSIONS: "postgis,timescaledb"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./alembic:/docker-entrypoint-initdb.d/alembic:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weathergpt -d weathergpt && psql -U weathergpt -d weathergpt -c 'SELECT postgis_version()'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - weathergpt-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # -------------------------------------------------------------------------
+  # MongoDB - Semi-structured advisories and bulletins
+  # -------------------------------------------------------------------------
+  mongo:
+    image: mongo:7.0
+    container_name: weathergpt-mongo
+    environment:
+      MONGO_INITDB_DATABASE: weathergpt
+      MONGO_INITDB_ROOT_USERNAME: weathergpt
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-weathergpt_dev_password}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "-u", "weathergpt", "-p", "${MONGO_PASSWORD:-weathergpt_dev_password}", "--authenticationDatabase", "admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - weathergpt-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # -------------------------------------------------------------------------
+  # TimescaleDB - Dense time-series data (runs as separate instance for isolation)
+  # Alternatively, can use the same Postgres instance with timescaledb extension
+  # -------------------------------------------------------------------------
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16-latest
+    container_name: weathergpt-timescaledb
+    environment:
+      POSTGRES_DB: weathergpt_ts
+      POSTGRES_USER: weathergpt
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-weathergpt_dev_password}
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weathergpt -d weathergpt_ts && psql -U weathergpt -d weathergpt_ts -c 'SELECT timescaledb_version()'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - weathergpt-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # -------------------------------------------------------------------------
+  # Backend API
+  # -------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: weathergpt-backend
+    environment:
+      - POSTGRES_URL=postgresql+asyncpg://weathergpt:${POSTGRES_PASSWORD:-weathergpt_dev_password}@postgres:5432/weathergpt
+      - MONGO_URL=mongodb://weathergpt:${MONGO_PASSWORD:-weathergpt_dev_password}@mongo:27017/weathergpt?authSource=admin
+      - TIMESCALE_URL=postgresql+asyncpg://weathergpt:${TIMESCALE_PASSWORD:-weathergpt_dev_password}@timescaledb:5432/weathergpt_ts
+      - JWT_SECRET=${JWT_SECRET:-weathergpt-dev-secret-change-me}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
+      - DEFAULT_LAT=${DEFAULT_LAT:-28.61}
+      - DEFAULT_LON=${DEFAULT_LON:-77.21}
+      - DEFAULT_WHATSAPP_LANG=${DEFAULT_WHATSAPP_LANG:-hi}
+      - MEDIA_DIR=/tmp/weathergpt_media
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - media_data:/tmp/weathergpt_media
+    networks:
+      - weathergpt-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # -------------------------------------------------------------------------
+  # Alembic Migration Runner (run once on deploy)
+  # -------------------------------------------------------------------------
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrations
+    container_name: weathergpt-migrations
+    environment:
+      - POSTGRES_URL=postgresql+asyncpg://weathergpt:${POSTGRES_PASSWORD:-weathergpt_dev_password}@postgres:5432/weathergpt
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - weathergpt-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    # Run once and exit
+    command: ["alembic", "upgrade", "head"]
+
+volumes:
+  postgres_data:
+    driver: local
+  mongo_data:
+    driver: local
+  timescaledb_data:
+    driver: local
+  media_data:
+    driver: local
+
+networks:
+  weathergpt-network:
+    driver: bridge
