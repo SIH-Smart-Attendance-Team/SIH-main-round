@@ -28,6 +28,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 load_dotenv()
 
 # ---------------------------------------------------------------------------
+# Database persistence imports (lazy-loaded for graceful degradation)
+# ---------------------------------------------------------------------------
+try:
+    from db.postgres import get_postgres_manager, close_postgres_manager
+    from db.mongo import get_mongo_manager, close_mongo_manager
+    from db.timescale import get_timescale_manager, close_timescale_manager
+    _PERSISTENCE_AVAILABLE = True
+except ImportError:
+    _PERSISTENCE_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
 
@@ -279,6 +290,29 @@ def create_app(
         except Exception:
             pass
 
+        # Initialize persistence layer (PostgreSQL + PostGIS, MongoDB, TimescaleDB)
+        if _PERSISTENCE_AVAILABLE:
+            try:
+                pg = get_postgres_manager()
+                await pg.initialize()
+                logger.info("PostgreSQL + PostGIS initialized")
+            except Exception as exc:
+                logger.warning("PostgreSQL unavailable (continuing without persistence): %s", exc)
+
+            try:
+                mongo = get_mongo_manager()
+                await mongo.initialize()
+                logger.info("MongoDB initialized")
+            except Exception as exc:
+                logger.warning("MongoDB unavailable (continuing without persistence): %s", exc)
+
+            try:
+                ts = get_timescale_manager()
+                await ts.initialize()
+                logger.info("TimescaleDB initialized")
+            except Exception as exc:
+                logger.warning("TimescaleDB unavailable (continuing without persistence): %s", exc)
+
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         logger.info("WeatherGPT application shutting down")
@@ -288,15 +322,65 @@ def create_app(
         except Exception:
             pass
 
+        # Close persistence connections
+        if _PERSISTENCE_AVAILABLE:
+            try:
+                await close_postgres_manager()
+                logger.info("PostgreSQL connections closed")
+            except Exception as exc:
+                logger.warning("Error closing PostgreSQL: %s", exc)
+
+            try:
+                await close_mongo_manager()
+                logger.info("MongoDB connections closed")
+            except Exception as exc:
+                logger.warning("Error closing MongoDB: %s", exc)
+
+            try:
+                await close_timescale_manager()
+                logger.info("TimescaleDB connections closed")
+            except Exception as exc:
+                logger.warning("Error closing TimescaleDB: %s", exc)
+
     # ---- Health endpoint is expected from main.py; add a minimal one if absent
     if not any(getattr(r, "path", "") == "/health" for r in app.routes):
         @app.get("/health", tags=["System"])
         async def health() -> Dict[str, Any]:
+            # Check all persistence stores
+            stores = {}
+            if _PERSISTENCE_AVAILABLE:
+                try:
+                    pg = get_postgres_manager()
+                    stores["postgresql"] = "healthy" if await pg.health_check() else "unhealthy"
+                except Exception:
+                    stores["postgresql"] = "unhealthy"
+
+                try:
+                    mongo = get_mongo_manager()
+                    stores["mongodb"] = "healthy" if await mongo.health_check() else "unhealthy"
+                except Exception:
+                    stores["mongodb"] = "unhealthy"
+
+                try:
+                    ts = get_timescale_manager()
+                    stores["timescaledb"] = "healthy" if await ts.health_check() else "unhealthy"
+                except Exception:
+                    stores["timescaledb"] = "unhealthy"
+            else:
+                stores = {
+                    "postgresql": "unavailable",
+                    "mongodb": "unavailable",
+                    "timescaledb": "unavailable",
+                }
+
+            overall_status = "ok" if all(v == "healthy" for v in stores.values()) else "degraded"
+
             return {
-                "status": "ok",
+                "status": overall_status,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "service": "WeatherGPT",
                 "version": version,
+                "stores": stores,
             }
 
     logger.info("FastAPI application created successfully")
