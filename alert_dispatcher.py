@@ -28,7 +28,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -80,7 +80,6 @@ class AlertDispatcher:
             BroadcastResponse,  # noqa: F401 — confirms shape
             filter_sessions_by_region,
             get_active_sessions,
-            UserSession,
         )
 
         mongo = get_mongo_manager()
@@ -206,11 +205,65 @@ class AlertDispatcher:
                 "dispatched_at": datetime.now(timezone.utc).isoformat(),
             }
 
+        elif channel == "cbas":
+            # Cell Broadcast (CBAS) — government / telco infrastructure required.
+            # This stub preserves the channel architecture so it can be enabled
+            # when telco partnerships are available. The dispatch logic
+            # (geofence-based broadcast to all phones in a geographic cell)
+            # would be implemented via a telco-provided CMAS/DTISG API.
+            #
+            # Not currently implemented due to budget constraints for
+            # telco API access. This stub records the intent and returns
+            # a structured failure so the audit trail shows the channel
+            # was attempted.
+            logger.info(
+                "CBAS dispatch requested for user %s — telco infrastructure "
+                "not available (budget constraint)", session.user_id,
+            )
+            return {
+                "user_id": session.user_id,
+                "channel": "cbas",
+                "address": address,
+                "success": False,
+                "detail": (
+                    "CBAS dispatch stub: requires telco CMAS/DTISG API access. "
+                    "Architecture is ready — integration pending funding."
+                ),
+                "dispatched_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        elif channel == "vhf_csc":
+            # VHF / CSC (Common Service Center) radio broadcast — requires
+            # radio hardware and government licensing. This stub preserves
+            # the channel in the architecture for future integration with
+            # All India Radio or state disaster management VHF networks.
+            #
+            # Not currently implemented — no budget for radio hardware or
+            # licensing. The alert payload is already formatted for
+            # short broadcast (≤60 words) so it can be handed off to an
+            # operator when hardware is available.
+            logger.info(
+                "VHF/CSC dispatch requested for user %s — radio hardware "
+                "and licensing not available (budget constraint)", session.user_id,
+            )
+            return {
+                "user_id": session.user_id,
+                "channel": "vhf_csc",
+                "address": address,
+                "success": False,
+                "detail": (
+                    "VHF/CSC dispatch stub: requires radio hardware and "
+                    "government licensing. Architecture is ready — integration "
+                    "pending funding for VHF equipment and operator licensing."
+                ),
+                "dispatched_at": datetime.now(timezone.utc).isoformat(),
+            }
+
         else:
-            logger.warning("No dispatcher for channel=%s user=%s", channel, session.user_id)
-            # OUT OF SCOPE: Cell Broadcast (CBAS) and VHF/CSC integration
-            # require government / telco infrastructure access that is not
-            # available in this build. These cannot be faked with a free API.
+            logger.warning("Unknown channel=%s for user=%s", channel, session.user_id)
+            # CBAS (Cell Broadcast) and VHF/CSC are handled by their own
+            # dedicated branches above. Unknown channels are logged as errors.
+            # See k8s/00-secrets.yaml for notes on out-of-scope channels.
             return {
                 "user_id": session.user_id,
                 "channel": channel,
