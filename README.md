@@ -55,22 +55,21 @@ the caller's conference to a voicemail-style capture.
 ## 4. WhatsApp flow (Meta Cloud API)
 
 1. `GET /whatsapp/webhook` — one-time verification handshake (`hub.challenge` echo).
-2. `POST /whatsapp/webhook` — inbound message event. Extract `wa_id` and text.
+2. `POST /whatsapp/webhook` — inbound message event (text or voice note). Extract `wa_id` and text/transcript.
 3. If the thread is flagged `pending_human`, the bot stays silent (a human
    is already handling it via the same number/dashboard).
 4. Otherwise, call `CoreAgent.handle_turn()`, send the reply via the Graph
-   API `/messages` endpoint.
+   API `/messages` endpoint (`whatsapp_webhook.send_whatsapp_message`).
 5. If escalation triggers, set the `pending_human` flag (TTL'd, e.g. 6h)
    and POST a notification to your internal agent dashboard/CRM/Slack
    webhook with the same `handoff_summary` used in the voice whisper.
 
-**Note on "official" API:** Meta's own **WhatsApp Cloud API** is what's
-shown here (no third-party BSP required, free-tier friendly for
-government/NGO-style deployments). If you'd rather go through **Twilio's
-WhatsApp API** for unified billing/tooling with the voice side, the
-webhook shape differs slightly (Twilio posts form-encoded `Body`/`From`
-like SMS) but the call into `CoreAgent.handle_turn()` is identical — only
-`_send_text` and the inbound parsing in `whatsapp_webhook.py` would change.
+**Implementation:** Meta's own **WhatsApp Cloud API** is the single supported
+path (no third-party BSP required, free-tier friendly for
+government/NGO-style deployments). Voice notes are transcribed via the
+shared `voice_service` (Bhashini → Whisper fallback) before being passed to
+the core agent. Outbound messages for alert broadcasting reuse the same
+`send_whatsapp_message` function.
 
 ## 5. Escalation criteria (shared)
 

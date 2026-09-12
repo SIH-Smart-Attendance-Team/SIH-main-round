@@ -190,8 +190,10 @@ def create_app(
 
     Routers aggregated from:
       - main.py          (weather, health, alerts, coastal …)
-      - whatsapp_bot.py  (WhatsApp webhook)
       - webhooks.py      (broadcast weather-alert webhook)
+      - whatsapp_webhook.py (Meta WhatsApp Cloud API webhook)
+      - voice_webhook.py (Twilio Voice webhook)
+      - sms_webhook.py   (Twilio SMS webhook)
     """
     _configure_logging(log_level)
 
@@ -240,16 +242,6 @@ def create_app(
             logger.warning("main.py has no router or app – skipped")
     except ImportError as exc:
         logger.warning("Could not import main.py: %s", exc)
-
-    try:
-        from Whatsapp_bot import router as whatsapp_router
-        app.include_router(whatsapp_router)
-        # Optional static media mount for TTS audio replies
-        if hasattr(__import__("Whatsapp_bot"), "mount_media_route"):
-            from Whatsapp_bot import mount_media_route
-            mount_media_route(app)
-    except ImportError as exc:
-        logger.warning("Could not import whatsapp_bot: %s", exc)
 
     try:
         from webhooks import router as webhooks_router

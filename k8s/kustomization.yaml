@@ -1,18 +1,22 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-metadata:
-  name: weathergpt
+
 namespace: weathergpt
 
 resources:
   - 00-namespace.yaml
-  - 01-config.yaml
+  - 00-secrets.yaml
+  - 01-configmap.yaml
   - 02-postgres.yaml
   - 03-mongo.yaml
   - 04-timescaledb.yaml
   - 05-backend.yaml
+  - 06-migrations-job.yaml
 
-# Common labels applied to all resources
 commonLabels:
-  project: weathergpt
-  layer: backend
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: weathergpt-platform
+
+images:
+  - name: ghcr.io/sih-smart-attendance-team/sih-main-round
+    newTag: latest

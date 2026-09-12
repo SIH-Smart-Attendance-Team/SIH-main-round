@@ -3,5 +3,6 @@
   "python.autoComplete.extraPaths": [
     "${workspaceFolder}"
   ],
-  "java.configuration.updateBuildConfiguration": "interactive"
+  "java.configuration.updateBuildConfiguration": "interactive",
+  "cmake.sourceDirectory": "/workspaces/SIH-main-round/weather_app/linux"
 }

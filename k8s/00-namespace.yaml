@@ -3,13 +3,5 @@ kind: Namespace
 metadata:
   name: weathergpt
   labels:
-    name: weathergpt
-    app: weathergpt
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: weathergpt
-  namespace: weathergpt
-  labels:
-    app: weathergpt
+    app.kubernetes.io/name: weathergpt
+    app.kubernetes.io/part-of: weathergpt-platform

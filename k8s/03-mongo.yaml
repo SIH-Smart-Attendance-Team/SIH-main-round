@@ -1,35 +1,78 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Service
 metadata:
-  name: weathergpt-mongo
+  name: mongo
   namespace: weathergpt
   labels:
-    app: weathergpt-mongo
+    app: mongo
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/component: database
 spec:
+  type: ClusterIP
+  ports:
+    - port: 27017
+      targetPort: 27017
+      name: mongo
+  selector:
+    app: mongo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-pvc
+  namespace: weathergpt
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: weathergpt
+  labels:
+    app: mongo
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/component: database
+spec:
+  serviceName: mongo
   replicas: 1
   selector:
     matchLabels:
-      app: weathergpt-mongo
+      app: mongo
   template:
     metadata:
       labels:
-        app: weathergpt-mongo
+        app: mongo
+        app.kubernetes.io/name: mongo
     spec:
       containers:
         - name: mongo
           image: mongo:7.0
+          ports:
+            - containerPort: 27017
+              name: mongo
           env:
             - name: MONGO_INITDB_DATABASE
-              value: "weathergpt"
+              valueFrom:
+                configMapKeyRef:
+                  name: weathergpt-config
+                  key: MONGO_DB
+                  optional: true
             - name: MONGO_INITDB_ROOT_USERNAME
-              value: "weathergpt"
+              valueFrom:
+                secretKeyRef:
+                  name: weathergpt-secrets
+                  key: MONGO_USER
             - name: MONGO_INITDB_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: weathergpt-secrets
                   key: MONGO_PASSWORD
-          ports:
-            - containerPort: 27017
           volumeMounts:
             - name: mongo-data
               mountPath: /data/db
@@ -39,48 +82,24 @@ spec:
               cpu: "250m"
             limits:
               memory: "1Gi"
-              cpu: "500m"
-          livenessProbe:
-            exec:
-              command: ["mongosh", "--eval", "db.adminCommand('ping')", "-u", "weathergpt", "--authenticationDatabase", "admin"]
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 5
+              cpu: "1000m"
           readinessProbe:
             exec:
-              command: ["mongosh", "--eval", "db.adminCommand('ping')", "-u", "weathergpt", "--authenticationDatabase", "admin"]
-            initialDelaySeconds: 15
-            periodSeconds: 5
-            timeoutSeconds: 5
+              command:
+                - mongosh
+                - --eval
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - mongosh
+                - --eval
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 30
+            periodSeconds: 30
       volumes:
         - name: mongo-data
           persistentVolumeClaim:
-            claimName: weathergpt-mongo-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: weathergpt-mongo-pvc
-  namespace: weathergpt
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 10Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: weathergpt-mongo
-  namespace: weathergpt
-  labels:
-    app: weathergpt-mongo
-spec:
-  selector:
-    app: weathergpt-mongo
-  ports:
-    - name: mongo
-      port: 27017
-      targetPort: 27017
-  type: ClusterIP
+            claimName: mongo-pvc

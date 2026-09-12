@@ -1,27 +1,72 @@
-# Dockerfile for WeatherGPT Backend
-FROM python:3.12-slim
+# =============================================================================
+# Dockerfile – WeatherGPT backend (multi-stage)
+# Python 3.12 + ffmpeg for audio processing
+# =============================================================================
+
+# ---------- builder stage ----------------------------------------------------
+FROM python:3.12-slim-bookworm AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
+
+# System deps needed to compile some Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        libffi-dev \
+        libssl-dev \
+        libpq-dev \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies into a virtualenv so we can copy it cleanly
+COPY requirements.txt .
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install -r requirements.txt
+
+# ---------- runtime stage ----------------------------------------------------
+FROM python:3.12-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    LOG_LEVEL=INFO \
+    PORT=8000
 
 WORKDIR /app
 
-# Install system dependencies
+# Runtime system packages – ffmpeg is required for audio conversion
+# (Whisper / gTTS / Bhashini audio pipelines)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+        ffmpeg \
+        libsndfile1 \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --shell /bin/bash appuser
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy virtualenv from builder
+COPY --from=builder /opt/venv /opt/venv
 
-# Copy application code
-COPY . .
+# Application source
+COPY --chown=appuser:appuser . .
 
-# Create media directory
-RUN mkdir -p /tmp/weathergpt_media
+# Media directory for TTS / WhatsApp audio replies
+RUN mkdir -p /app/media /tmp/weathergpt_media \
+    && chown -R appuser:appuser /app /tmp/weathergpt_media
 
-# Expose port
+USER appuser
+
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "backend_app_factory:app", "--host", "0.0.0.0", "--port", "8000"]
+# Healthcheck against the /health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Launch via the application factory
+CMD ["uvicorn", "backend_app_factory:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
