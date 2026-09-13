@@ -32,11 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import logging
 import os
-import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -51,9 +50,9 @@ logger = logging.getLogger("weathergpt.expert")
 # Core LLM stack
 _LLM_AVAILABLE = False
 try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_google_genai import ChatGoogleGenerativeAI
     _LLM_AVAILABLE = True
 except ImportError:
     logger.warning("LangChain/Gemini not available – expert will use fallback mode")
@@ -71,7 +70,6 @@ from language_manager import (
     normalize_lang_code,
     prepare_for_nlu,
     translate_to_native,
-    get_bhashini_code,
 )
 
 # Weather data
@@ -174,8 +172,8 @@ class WeatherGPTExpert:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        weather_service: Optional[WeatherService] = None,
+        api_key: str | None = None,
+        weather_service: WeatherService | None = None,
         default_persona: str = "general",
         default_language: str = "en",
     ):
@@ -189,7 +187,7 @@ class WeatherGPTExpert:
         if _LLM_AVAILABLE:
             self._init_llm(api_key)
 
-    def _init_llm(self, api_key: Optional[str] = None) -> None:
+    def _init_llm(self, api_key: str | None = None) -> None:
         """Initialize Gemini LLM if credentials are available."""
         key = api_key or (
             os.getenv("GOOGLE_API_KEY")
@@ -222,13 +220,13 @@ class WeatherGPTExpert:
     async def chat(
         self,
         message: str,
-        history: Optional[List[Dict[str, str]]] = None,
-        persona: Optional[str] = None,
-        language: Optional[str] = None,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        location_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        history: list[dict[str, str]] | None = None,
+        persona: str | None = None,
+        language: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        location_name: str | None = None,
+    ) -> dict[str, Any]:
         """
         One text chat turn with the weather expert.
 
@@ -313,13 +311,13 @@ class WeatherGPTExpert:
     async def chat_stream(
         self,
         message: str,
-        history: Optional[List[Dict[str, str]]] = None,
-        persona: Optional[str] = None,
-        language: Optional[str] = None,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        location_name: Optional[str] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        history: list[dict[str, str]] | None = None,
+        persona: str | None = None,
+        language: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        location_name: str | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Streaming version of chat(). Yields token chunks for real-time display.
         """
@@ -350,13 +348,13 @@ class WeatherGPTExpert:
         self,
         audio_bytes: bytes,
         audio_format: str = "wav",
-        history: Optional[List[Dict[str, str]]] = None,
-        persona: Optional[str] = None,
-        language: Optional[str] = None,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        location_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        history: list[dict[str, str]] | None = None,
+        persona: str | None = None,
+        language: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        location_name: str | None = None,
+    ) -> dict[str, Any]:
         """
         Complete voice chat pipeline:
         audio → ASR → text chat → TTS audio response
@@ -442,14 +440,14 @@ class WeatherGPTExpert:
         self,
         file_bytes: bytes,
         content_type: str,
-        filename: Optional[str] = None,
-        prompt: Optional[str] = None,
-        persona: Optional[str] = None,
-        language: Optional[str] = None,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        history: Optional[List[Dict[str, str]]] = None,
-    ) -> Dict[str, Any]:
+        filename: str | None = None,
+        prompt: str | None = None,
+        persona: str | None = None,
+        language: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        history: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         """
         Analyze uploaded files: images (crop photos, radar), PDFs (reports),
         CSVs (weather data logs).
@@ -510,9 +508,9 @@ class WeatherGPTExpert:
 
     async def _get_weather_context(
         self,
-        lat: Optional[float],
-        lon: Optional[float],
-        location_name: Optional[str],
+        lat: float | None,
+        lon: float | None,
+        location_name: str | None,
     ) -> tuple[str, bool]:
         """Fetch live weather context. Returns (context_text, success_bool)."""
         try:
@@ -535,7 +533,7 @@ class WeatherGPTExpert:
             current = await self._svc.get_current_weather(lat, lon)
             forecast = await self._svc.get_forecast(lat, lon, days=3)
 
-            lines: List[str] = []
+            lines: list[str] = []
             if location_name:
                 lines.append(f"Location: {location_name}")
             lines.append(f"Coordinates: {lat:.3f}°N, {lon:.3f}°E")
@@ -607,7 +605,7 @@ class WeatherGPTExpert:
         persona: str,
         language: str,
         weather_context: str,
-        history: List[Dict[str, str]],
+        history: list[dict[str, str]],
     ) -> str:
         """Generate a reply using Gemini LLM with weather context."""
         if self._llm is None:
@@ -665,7 +663,7 @@ class WeatherGPTExpert:
 
     async def _generate_vision_reply(
         self,
-        media_block: Dict[str, Any],
+        media_block: dict[str, Any],
         prompt_text: str,
         persona: str,
         language: str,
@@ -790,8 +788,8 @@ class WeatherGPTExpert:
         self,
         file_bytes: bytes,
         content_type: str,
-        filename: Optional[str],
-    ) -> tuple[Dict[str, Any], str]:
+        filename: str | None,
+    ) -> tuple[dict[str, Any], str]:
         """
         Build a media block for Gemini Vision API.
         Returns (media_block, default_prompt).
@@ -836,8 +834,8 @@ class WeatherGPTExpert:
                 block = {"type": "text", "text": f"CSV Data:\n{csv_text}"}
                 prompt = "Analyze this data and summarize key trends or anomalies."
                 return block, prompt
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("CSV decode failed: %s", exc)
 
         raise ValueError(
             f"Unsupported file type: {content_type}. "
@@ -849,7 +847,7 @@ class WeatherGPTExpert:
     # ─────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _wind_direction_name(degrees: Optional[float]) -> str:
+    def _wind_direction_name(degrees: float | None) -> str:
         """Convert wind direction degrees to compass name."""
         if degrees is None:
             return "unknown"
@@ -861,7 +859,7 @@ class WeatherGPTExpert:
     # Health Check
     # ─────────────────────────────────────────────────────────────────────
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         """Return agent status for diagnostics."""
         return {
             "llm_available": self._llm is not None,
@@ -877,7 +875,7 @@ class WeatherGPTExpert:
 # Convenience singleton
 # ---------------------------------------------------------------------------
 
-_default_agent: Optional[WeatherGPTExpert] = None
+_default_agent: WeatherGPTExpert | None = None
 
 
 def get_expert(**kwargs) -> WeatherGPTExpert:

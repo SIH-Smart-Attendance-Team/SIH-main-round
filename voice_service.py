@@ -18,8 +18,6 @@ import io
 import logging
 import os
 import tempfile
-from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -177,7 +175,7 @@ class VoiceService:
 
     def __init__(self, prefer_bhashini: bool = True) -> None:
         self.prefer_bhashini = prefer_bhashini
-        self._bhashini_ok: Optional[bool] = None   # cached reachability
+        self._bhashini_ok: bool | None = None   # cached reachability
 
     async def _use_bhashini(self) -> bool:
         if not self.prefer_bhashini:
@@ -296,7 +294,7 @@ class VoiceService:
 # Module-level singleton (FastAPI dependency friendly)
 # ---------------------------------------------------------------------------
 
-_default_service: Optional[VoiceService] = None
+_default_service: VoiceService | None = None
 
 
 def get_voice_service() -> VoiceService:

@@ -7,12 +7,13 @@ Implements connection pooling, health checks, and graceful degradation.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -30,7 +31,7 @@ class PostgresManager:
 
     def __init__(
         self,
-        url: Optional[str] = None,
+        url: str | None = None,
         pool_size: int = 10,
         max_overflow: int = 20,
         pool_timeout: float = 30.0,
@@ -41,8 +42,8 @@ class PostgresManager:
         if not self._url:
             raise ValueError("POSTGRES_URL environment variable not set")
 
-        self._engine: Optional[AsyncEngine] = None
-        self._session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+        self._engine: AsyncEngine | None = None
+        self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._pool_size = pool_size
         self._max_overflow = max_overflow
         self._pool_timeout = pool_timeout
@@ -130,7 +131,6 @@ class PostgresManager:
         self, name: str, lat: float, lon: float
     ) -> Location:
         """Insert or update a location, returning the Location object."""
-        from sqlalchemy import select
         from sqlalchemy.dialects.postgresql import insert
 
         geom_wkt = f"SRID=4326;POINT({lon} {lat})"
@@ -148,14 +148,14 @@ class PostgresManager:
             result = await session.execute(stmt)
             return result.scalar_one()
 
-    async def get_location_by_name(self, name: str) -> Optional[Location]:
+    async def get_location_by_name(self, name: str) -> Location | None:
         """Get location by name."""
         from sqlalchemy import select
         async with self.session() as session:
             result = await session.execute(select(Location).where(Location.name == name))
             return result.scalar_one_or_none()
 
-    async def get_location_by_id(self, location_id: int) -> Optional[Location]:
+    async def get_location_by_id(self, location_id: int) -> Location | None:
         """Get location by ID."""
         from sqlalchemy import select
         async with self.session() as session:
@@ -166,9 +166,9 @@ class PostgresManager:
         self,
         location_id: int,
         raw_json: dict,
-        temp: Optional[float] = None,
-        precip: Optional[float] = None,
-        wind: Optional[float] = None,
+        temp: float | None = None,
+        precip: float | None = None,
+        wind: float | None = None,
         source: str = "open-meteo",
     ) -> ForecastSnapshot:
         """Insert a forecast snapshot."""
@@ -188,7 +188,7 @@ class PostgresManager:
 
     async def get_latest_forecast_snapshot(
         self, location_id: int
-    ) -> Optional[ForecastSnapshot]:
+    ) -> ForecastSnapshot | None:
         """Get the most recent forecast snapshot for a location."""
         from sqlalchemy import select
         async with self.session() as session:
@@ -208,7 +208,7 @@ class PostgresManager:
         lon: float,
         source: str,
         raw_json: dict,
-        location_id: Optional[int] = None,
+        location_id: int | None = None,
     ) -> DisasterEvent:
         """Insert a disaster event."""
         geom_wkt = f"SRID=4326;POINT({lon} {lat})"
@@ -228,9 +228,9 @@ class PostgresManager:
 
     async def get_disaster_events(
         self,
-        type_: Optional[str] = None,
-        severity: Optional[str] = None,
-        since: Optional[dt.datetime] = None,
+        type_: str | None = None,
+        severity: str | None = None,
+        since: dt.datetime | None = None,
         limit: int = 100,
     ) -> list[DisasterEvent]:
         """Query disaster events with optional filters."""
@@ -252,7 +252,7 @@ class PostgresManager:
         min_lat: float,
         max_lon: float,
         max_lat: float,
-        since: Optional[dt.datetime] = None,
+        since: dt.datetime | None = None,
         limit: int = 100,
     ) -> list[DisasterEvent]:
         """Get disaster events within a bounding box using PostGIS."""
@@ -273,7 +273,7 @@ class PostgresManager:
             return list(result.scalars().all())
 
 
-_postgres_manager: Optional[PostgresManager] = None
+_postgres_manager: PostgresManager | None = None
 
 
 def get_postgres_manager() -> PostgresManager:

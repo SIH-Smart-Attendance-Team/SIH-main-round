@@ -10,8 +10,8 @@ Tables:
 from __future__ import annotations
 
 import datetime as dt
-from typing import Optional
 
+from geoalchemy2 import Geography
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -20,12 +20,9 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from geoalchemy2 import Geography, Geometry
 
 
 class Base(DeclarativeBase):
@@ -50,10 +47,10 @@ class Location(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    forecast_snapshots: Mapped[list["ForecastSnapshot"]] = relationship(
+    forecast_snapshots: Mapped[list[ForecastSnapshot]] = relationship(
         back_populates="location", cascade="all, delete-orphan"
     )
-    disaster_events: Mapped[list["DisasterEvent"]] = relationship(
+    disaster_events: Mapped[list[DisasterEvent]] = relationship(
         back_populates="location", cascade="all, delete-orphan"
     )
 
@@ -74,12 +71,12 @@ class ForecastSnapshot(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     raw_json: Mapped[dict] = mapped_column(JSON, nullable=False)
-    temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    precip: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    wind: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    temp: Mapped[float | None] = mapped_column(Float, nullable=True)
+    precip: Mapped[float | None] = mapped_column(Float, nullable=True)
+    wind: Mapped[float | None] = mapped_column(Float, nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="open-meteo", nullable=False)
 
-    location: Mapped["Location"] = relationship(back_populates="forecast_snapshots")
+    location: Mapped[Location] = relationship(back_populates="forecast_snapshots")
 
     __table_args__ = (
         Index("ix_forecast_snapshots_location_fetched", "location_id", "fetched_at"),
@@ -102,11 +99,11 @@ class DisasterEvent(Base):
     )
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     raw_json: Mapped[dict] = mapped_column(JSON, nullable=False)
-    location_id: Mapped[Optional[int]] = mapped_column(
+    location_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("locations.id", ondelete="SET NULL"), nullable=True
     )
 
-    location: Mapped[Optional["Location"]] = relationship(back_populates="disaster_events")
+    location: Mapped[Location | None] = relationship(back_populates="disaster_events")
 
     __table_args__ = (
         Index("ix_disaster_events_type_severity", "type", "severity"),

@@ -6,11 +6,12 @@ without requiring database connections.
 """
 
 import pytest
+
 from alert_generator import (
+    SEVERITY_ORDER,
     _event_fingerprint,
     _event_key,
     _severity_escalated,
-    SEVERITY_ORDER,
 )
 
 
@@ -114,7 +115,11 @@ class TestDiffLogic:
 
     def test_new_event_detected(self):
         """A fingerprint not in last_seen_map should be 'new'."""
-        from alert_generator import _event_fingerprint, _event_key, _severity_escalated, SEVERITY_ORDER
+        from alert_generator import (
+            _event_fingerprint,
+            _event_key,
+            _severity_escalated,
+        )
 
         current_events = [{
             "source": "GDACS",
@@ -148,7 +153,11 @@ class TestDiffLogic:
 
     def test_severity_escalation_detected(self):
         """Higher severity for same fingerprint should be 'escalated'."""
-        from alert_generator import _event_fingerprint, _event_key, _severity_escalated, SEVERITY_ORDER
+        from alert_generator import (
+            _event_fingerprint,
+            _event_key,
+            _severity_escalated,
+        )
 
         current_events = [{
             "source": "GDACS",
@@ -187,7 +196,11 @@ class TestDiffLogic:
 
     def test_same_severity_not_escalated(self):
         """Same severity should not produce a candidate."""
-        from alert_generator import _event_fingerprint, _event_key, _severity_escalated, SEVERITY_ORDER
+        from alert_generator import (
+            _event_fingerprint,
+            _event_key,
+            _severity_escalated,
+        )
 
         current_events = [{
             "source": "GDACS",
@@ -224,7 +237,9 @@ class TestDiffLogic:
 
     def test_duplicate_fingerprints_deduplicated(self):
         """Duplicate fingerprints in current_events should be deduplicated."""
-        from alert_generator import _event_fingerprint, _event_key, _severity_escalated, SEVERITY_ORDER
+        from alert_generator import (
+            _event_fingerprint,
+        )
 
         # Two events with same fingerprint (same source/type/time/title/coords)
         current_events = [

@@ -24,7 +24,7 @@ import hashlib
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -36,7 +36,7 @@ logger = logging.getLogger("weathergpt.alert_generator")
 SEVERITY_ORDER = {"green": 0, "yellow": 1, "orange": 2, "red": 3}
 
 
-def _event_fingerprint(event: Dict[str, Any]) -> str:
+def _event_fingerprint(event: dict[str, Any]) -> str:
     """
     Create a stable fingerprint for an event across polls.
 
@@ -54,7 +54,7 @@ def _event_fingerprint(event: Dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _event_key(event: Dict[str, Any]) -> Tuple[str, str, str]:
+def _event_key(event: dict[str, Any]) -> tuple[str, str, str]:
     """Return (source, hazard_type, fingerprint) tuple for diffing."""
     return (
         str(event.get("source", "unknown")),
@@ -81,13 +81,13 @@ class AlertGenerator:
 
     def __init__(
         self,
-        poll_interval_seconds: Optional[int] = None,
-        languages: Optional[List[str]] = None,
-        poll_latitude: Optional[float] = None,
-        poll_longitude: Optional[float] = None,
-        poll_radius_km: Optional[float] = None,
-        poll_days: Optional[int] = None,
-        max_drafts_per_cycle: Optional[int] = None,
+        poll_interval_seconds: int | None = None,
+        languages: list[str] | None = None,
+        poll_latitude: float | None = None,
+        poll_longitude: float | None = None,
+        poll_radius_km: float | None = None,
+        poll_days: int | None = None,
+        max_drafts_per_cycle: int | None = None,
     ):
         self.poll_interval_seconds = poll_interval_seconds or int(
             os.getenv("ALERT_POLL_INTERVAL_SECONDS", "900")
@@ -113,21 +113,21 @@ class AlertGenerator:
             os.getenv("ALERT_MAX_DRAFTS_PER_CYCLE", "20")
         )
         self._stop_event = asyncio.Event()
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
-        self._last_poll_at: Optional[datetime] = None
-        self._last_cycle_stats: Dict[str, int] = {}
+        self._last_poll_at: datetime | None = None
+        self._last_cycle_stats: dict[str, int] = {}
 
     @property
     def is_running(self) -> bool:
         return self._running
 
     @property
-    def last_poll_at(self) -> Optional[datetime]:
+    def last_poll_at(self) -> datetime | None:
         return self._last_poll_at
 
     @property
-    def last_cycle_stats(self) -> Dict[str, int]:
+    def last_cycle_stats(self) -> dict[str, int]:
         return dict(self._last_cycle_stats)
 
     async def start(self) -> None:
@@ -174,7 +174,7 @@ class AlertGenerator:
             except asyncio.TimeoutError:
                 pass
 
-    async def poll_once(self) -> Dict[str, int]:
+    async def poll_once(self) -> dict[str, int]:
         """
         Run a single poll cycle.
 
@@ -225,7 +225,7 @@ class AlertGenerator:
             self._last_cycle_stats = stats
             return stats
 
-        last_seen_map: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        last_seen_map: dict[tuple[str, str, str], dict[str, Any]] = {}
         for event in last_seen:
             raw = event.raw_json or {}
             fingerprint = raw.get("fingerprint") or _event_fingerprint(raw)
@@ -242,8 +242,8 @@ class AlertGenerator:
                 last_seen_map[key] = event
 
         # 3. Diff current vs last-seen: new events + severity escalations
-        candidates: List[Tuple[Dict[str, Any], str]] = []
-        seen_fingerprints: Set[str] = set()
+        candidates: list[tuple[dict[str, Any], str]] = []
+        seen_fingerprints: set[str] = set()
         for event in current_events:
             fingerprint = _event_fingerprint(event)
             if fingerprint in seen_fingerprints:
@@ -342,7 +342,7 @@ class AlertGenerator:
 
     async def _store_draft(
         self,
-        event: Dict[str, Any],
+        event: dict[str, Any],
         event_id: str,
         language: str,
         script_text: str,
@@ -377,7 +377,7 @@ class AlertGenerator:
         )
 
 
-_alert_generator: Optional[AlertGenerator] = None
+_alert_generator: AlertGenerator | None = None
 
 
 def get_alert_generator() -> AlertGenerator:

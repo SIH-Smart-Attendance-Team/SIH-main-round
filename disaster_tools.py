@@ -24,7 +24,6 @@ legend should use these same four colors for consistency.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import httpx
 
@@ -51,7 +50,7 @@ def _within_bbox(lat: float, lon: float, bbox: dict) -> bool:
 
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
-    from math import radians, sin, cos, sqrt, atan2
+    from math import atan2, cos, radians, sin, sqrt
 
     r = 6371.0
     dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
@@ -325,4 +324,4 @@ async def execute_disaster_tool(name: str, tool_input: dict) -> dict:
             tool_input["latitude"], tool_input["longitude"], tool_input.get("radius_km", 300)
         )
     except Exception as e:  # noqa: BLE001
-        return {"error": f"Disaster alert lookup failed: {str(e)}"}
+        return {"error": f"Disaster alert lookup failed: {e!s}"}

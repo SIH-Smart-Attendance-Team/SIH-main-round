@@ -14,8 +14,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -39,7 +37,7 @@ class ConversationTurn:
     text: str                      # normalized transcript / message text
     language: str                  # e.g. "hi", "bn", "ta", "en"
     confidence: float              # NLU/ASR confidence 0.0-1.0 for this turn
-    intent: Optional[str] = None   # e.g. "crop_disease", "cyclone_warning"
+    intent: str | None = None   # e.g. "crop_disease", "cyclone_warning"
     sentiment_score: float = 0.0   # -1 (distressed/angry) to +1 (calm/positive)
 
 
@@ -50,7 +48,7 @@ class ConversationState:
     turn_count: int = 0
     low_confidence_streak: int = 0
     explicit_human_request: bool = False
-    location: Optional[str] = None
+    location: str | None = None
     started_at: float = field(default_factory=time.time)
     already_escalated: bool = False
 

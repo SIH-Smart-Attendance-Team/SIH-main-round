@@ -188,6 +188,6 @@ async def execute_tool(name: str, tool_input: dict) -> dict:
     except httpx.HTTPStatusError as e:
         return {"error": f"Upstream weather API returned {e.response.status_code}"}
     except httpx.RequestError as e:
-        return {"error": f"Could not reach upstream weather API: {str(e)}"}
+        return {"error": f"Could not reach upstream weather API: {e!s}"}
     except Exception as e:  # noqa: BLE001 - surfaced to the model as data, not a crash
-        return {"error": f"Tool execution failed: {str(e)}"}
+        return {"error": f"Tool execution failed: {e!s}"}

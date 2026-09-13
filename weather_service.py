@@ -17,9 +17,9 @@ import asyncio
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
@@ -54,67 +54,67 @@ BASE_BACKOFF = 0.5  # seconds
 # ---------------------------------------------------------------------------
 
 class CurrentWeather(BaseModel):
-    temperature: Optional[float] = None
-    relative_humidity: Optional[float] = None
-    apparent_temperature: Optional[float] = None
-    precipitation: Optional[float] = None
-    wind_speed: Optional[float] = None
-    wind_direction: Optional[float] = None
-    wind_gusts: Optional[float] = None
-    weather_code: Optional[int] = None
-    pressure_msl: Optional[float] = None
-    cloud_cover: Optional[float] = None
-    visibility: Optional[float] = None
-    dew_point_2m: Optional[float] = None
-    uv_index: Optional[float] = None
-    is_day: Optional[int] = None
-    time: Optional[str] = None
+    temperature: float | None = None
+    relative_humidity: float | None = None
+    apparent_temperature: float | None = None
+    precipitation: float | None = None
+    wind_speed: float | None = None
+    wind_direction: float | None = None
+    wind_gusts: float | None = None
+    weather_code: int | None = None
+    pressure_msl: float | None = None
+    cloud_cover: float | None = None
+    visibility: float | None = None
+    dew_point_2m: float | None = None
+    uv_index: float | None = None
+    is_day: int | None = None
+    time: str | None = None
 
 
 class DailyForecastDay(BaseModel):
     date: str
-    temperature_max: Optional[float] = None
-    temperature_min: Optional[float] = None
-    precipitation_sum: Optional[float] = None
-    precipitation_probability_max: Optional[float] = None
-    weather_code: Optional[int] = None
+    temperature_max: float | None = None
+    temperature_min: float | None = None
+    precipitation_sum: float | None = None
+    precipitation_probability_max: float | None = None
+    weather_code: int | None = None
 
 
 class HourlyForecastPoint(BaseModel):
     time: str
-    temperature: Optional[float] = None
-    precipitation: Optional[float] = None
-    precipitation_probability: Optional[float] = None
-    weather_code: Optional[int] = None
+    temperature: float | None = None
+    precipitation: float | None = None
+    precipitation_probability: float | None = None
+    weather_code: int | None = None
 
 
 class ForecastResponse(BaseModel):
     latitude: float
     longitude: float
-    timezone: Optional[str] = None
-    current: Optional[CurrentWeather] = None
-    daily: List[DailyForecastDay] = Field(default_factory=list)
-    hourly: List[HourlyForecastPoint] = Field(default_factory=list)
+    timezone: str | None = None
+    current: CurrentWeather | None = None
+    daily: list[DailyForecastDay] = Field(default_factory=list)
+    hourly: list[HourlyForecastPoint] = Field(default_factory=list)
 
 
 class AgriculturalMetrics(BaseModel):
-    et0_fao_evapotranspiration: Optional[float] = None
-    soil_temperature_0_to_7cm: Optional[float] = None
-    soil_temperature_7_to_28cm: Optional[float] = None
-    soil_moisture_0_to_7cm: Optional[float] = None
-    soil_moisture_7_to_28cm: Optional[float] = None
-    leaf_wetness_probability: Optional[float] = None
-    time: Optional[str] = None
+    et0_fao_evapotranspiration: float | None = None
+    soil_temperature_0_to_7cm: float | None = None
+    soil_temperature_7_to_28cm: float | None = None
+    soil_moisture_0_to_7cm: float | None = None
+    soil_moisture_7_to_28cm: float | None = None
+    leaf_wetness_probability: float | None = None
+    time: str | None = None
 
 
 class MarineMetrics(BaseModel):
-    wave_height: Optional[float] = None
-    wave_direction: Optional[float] = None
-    swell_wave_height: Optional[float] = None
-    swell_wave_direction: Optional[float] = None
-    sea_surface_temperature: Optional[float] = None
-    wind_gusts: Optional[float] = None
-    time: Optional[str] = None
+    wave_height: float | None = None
+    wave_direction: float | None = None
+    swell_wave_height: float | None = None
+    swell_wave_direction: float | None = None
+    sea_surface_temperature: float | None = None
+    wind_gusts: float | None = None
+    time: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -130,10 +130,10 @@ class _CacheEntry:
 class AsyncTTLCache:
     def __init__(self, ttl: float = CACHE_TTL_SECONDS) -> None:
         self._ttl = ttl
-        self._store: Dict[str, _CacheEntry] = {}
+        self._store: dict[str, _CacheEntry] = {}
         self._lock = asyncio.Lock()
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         async with self._lock:
             entry = self._store.get(key)
             if entry is None:
@@ -167,7 +167,7 @@ class WeatherService:
 
     def __init__(
         self,
-        client: Optional[httpx.AsyncClient] = None,
+        client: httpx.AsyncClient | None = None,
         cache_ttl: float = CACHE_TTL_SECONDS,
         timeout: float = 15.0,
     ) -> None:
@@ -181,10 +181,10 @@ class WeatherService:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "WeatherService":
+    async def __aenter__(self) -> WeatherService:
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
 
     # ------------------------------------------------------------------
@@ -218,7 +218,7 @@ class WeatherService:
         return self._ts_manager
 
     async def _persist_current_weather(
-        self, lat: float, lon: float, data: Dict[str, Any]
+        self, lat: float, lon: float, data: dict[str, Any]
     ) -> None:
         """Persist current weather to PostgreSQL and TimescaleDB (fire-and-forget)."""
         pg = await self._get_pg_manager()
@@ -262,7 +262,7 @@ class WeatherService:
             logger.warning("Failed to persist current weather: %s", exc)
 
     async def _persist_forecast(
-        self, lat: float, lon: float, data: Dict[str, Any]
+        self, lat: float, lon: float, data: dict[str, Any]
     ) -> None:
         """Persist forecast data to PostgreSQL and TimescaleDB (fire-and-forget)."""
         pg = await self._get_pg_manager()
@@ -306,7 +306,7 @@ class WeatherService:
             logger.warning("Failed to persist forecast: %s", exc)
 
     async def _persist_agri_metrics(
-        self, lat: float, lon: float, data: Dict[str, Any]
+        self, lat: float, lon: float, data: dict[str, Any]
     ) -> None:
         """Persist agricultural metrics to PostgreSQL (fire-and-forget)."""
         pg = await self._get_pg_manager()
@@ -329,7 +329,7 @@ class WeatherService:
             logger.warning("Failed to persist agri metrics: %s", exc)
 
     async def _persist_marine_metrics(
-        self, lat: float, lon: float, data: Dict[str, Any]
+        self, lat: float, lon: float, data: dict[str, Any]
     ) -> None:
         """Persist marine metrics to PostgreSQL (fire-and-forget)."""
         pg = await self._get_pg_manager()
@@ -358,16 +358,16 @@ class WeatherService:
     async def _request(
         self,
         url: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         *,
-        cache_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        cache_key: str | None = None,
+    ) -> dict[str, Any]:
         if cache_key:
             cached = await self._cache.get(cache_key)
             if cached is not None:
                 return cached
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
                 resp = await self._client.get(url, params=params)
@@ -391,7 +391,7 @@ class WeatherService:
     # Public helper methods required by the specification
     # ------------------------------------------------------------------
 
-    async def get_current_weather(self, lat: float, lon: float) -> Dict[str, Any]:
+    async def get_current_weather(self, lat: float, lon: float) -> dict[str, Any]:
         """
         Returns temperature, relative humidity, wind speed, pressure,
         weather code, UV index, visibility, dew point, cloud cover,
@@ -450,7 +450,7 @@ class WeatherService:
 
         return result
 
-    async def get_agricultural_metrics(self, lat: float, lon: float) -> Dict[str, Any]:
+    async def get_agricultural_metrics(self, lat: float, lon: float) -> dict[str, Any]:
         """
         Fetches evapotranspiration, soil temperature, soil moisture,
         and leaf wetness probability.
@@ -491,7 +491,7 @@ class WeatherService:
 
         return result
 
-    async def get_marine_metrics(self, lat: float, lon: float) -> Dict[str, Any]:
+    async def get_marine_metrics(self, lat: float, lon: float) -> dict[str, Any]:
         """
         Fetches wave height, wave direction, swell, ocean surface temperature,
         and wind gusts via Open-Meteo Marine API. Optionally enriches with
@@ -574,7 +574,7 @@ class WeatherService:
 
     async def _fetch_stormglass_marine(
         self, lat: float, lon: float, api_key: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Fetch marine data from Storm Glass API (free tier available)."""
         url = "https://api.stormglass.io/v2/weather/point"
         params = {
@@ -599,11 +599,11 @@ class WeatherService:
                         "water_temperature": hours.get("waterTemperature", {}).get("sg"),
                         "ocean_current": hours.get("currentSpeed", {}).get("sg"),
                     }
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Stormglass request failed: %s", exc)
         return None
 
-    async def geocode(self, query: str, count: int = 5) -> List[Dict[str, Any]]:
+    async def geocode(self, query: str, count: int = 5) -> list[dict[str, Any]]:
         """
         Convert a city/place name into coordinates using Open-Meteo Geocoding.
         Returns list of {name, country, admin1, latitude, longitude}.
@@ -704,7 +704,7 @@ class WeatherService:
         # Daily
         daily_raw = data.get("daily", {})
         times = daily_raw.get("time", [])
-        daily: List[DailyForecastDay] = []
+        daily: list[DailyForecastDay] = []
         for i, date in enumerate(times):
             daily.append(
                 DailyForecastDay(
@@ -722,7 +722,7 @@ class WeatherService:
         # Hourly
         hourly_raw = data.get("hourly", {})
         h_times = hourly_raw.get("time", [])
-        hourly: List[HourlyForecastPoint] = []
+        hourly: list[HourlyForecastPoint] = []
         for i, t in enumerate(h_times):
             hourly.append(
                 HourlyForecastPoint(
@@ -755,7 +755,7 @@ class WeatherService:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _safe_index(seq: Optional[List[Any]], idx: int) -> Any:
+def _safe_index(seq: list[Any] | None, idx: int) -> Any:
     if seq is None or idx >= len(seq):
         return None
     return seq[idx]
@@ -765,7 +765,7 @@ def _safe_index(seq: Optional[List[Any]], idx: int) -> Any:
 # Convenience factory for FastAPI dependency injection
 # ---------------------------------------------------------------------------
 
-_default_service: Optional[WeatherService] = None
+_default_service: WeatherService | None = None
 
 
 def get_weather_service() -> WeatherService:

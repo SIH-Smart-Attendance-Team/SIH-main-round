@@ -19,9 +19,8 @@ import math
 import os
 import time
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger("webhooks")
@@ -61,14 +60,14 @@ class AffectedRegion(BaseModel):
     Either a centre + radius (km) or an explicit bounding box.
     At least one representation must be provided.
     """
-    centre: Optional[GeoPoint] = None
-    radius_km: Optional[float] = Field(None, gt=0, le=2000)
+    centre: GeoPoint | None = None
+    radius_km: float | None = Field(None, gt=0, le=2000)
     # Bounding box: [min_lon, min_lat, max_lon, max_lat]
-    bbox: Optional[List[float]] = None
+    bbox: list[float] | None = None
 
     @field_validator("bbox")
     @classmethod
-    def validate_bbox(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+    def validate_bbox(cls, v: list[float] | None) -> list[float] | None:
         if v is not None and len(v) != 4:
             raise ValueError("bbox must contain exactly 4 numbers: [min_lon, min_lat, max_lon, max_lat]")
         return v
@@ -76,23 +75,23 @@ class AffectedRegion(BaseModel):
 
 class WeatherAlertPayload(BaseModel):
     """Incoming JSON body for POST /api/v1/webhooks/weather-alert."""
-    secret: Optional[str] = Field(None, description="Shared webhook secret")
+    secret: str | None = Field(None, description="Shared webhook secret")
     severity: AlertSeverity
     title: str = Field(..., min_length=3, max_length=200)
     message: str = Field(..., min_length=5, max_length=2000)
     region: AffectedRegion
     # Optional extra metadata
     source: str = Field("internal", description="Originating system (IMD, NDMA, …)")
-    valid_from: Optional[str] = None
-    valid_until: Optional[str] = None
-    language_hints: List[str] = Field(default_factory=lambda: ["hi", "en"])
+    valid_from: str | None = None
+    valid_until: str | None = None
+    language_hints: list[str] = Field(default_factory=lambda: ["hi", "en"])
 
 
 class DispatchResult(BaseModel):
     user_id: str
     channel: str
     success: bool
-    detail: Optional[str] = None
+    detail: str | None = None
 
 
 class BroadcastResponse(BaseModel):
@@ -101,7 +100,7 @@ class BroadcastResponse(BaseModel):
     matched_users: int
     dispatched: int
     failed: int
-    results: List[DispatchResult] = Field(default_factory=list)
+    results: list[DispatchResult] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +119,7 @@ class UserSession(BaseModel):
 
 
 # Process-wide registry – in production this would be a database
-_SESSIONS: Dict[str, UserSession] = {}
+_SESSIONS: dict[str, UserSession] = {}
 
 
 def register_session(session: UserSession) -> None:
@@ -128,7 +127,7 @@ def register_session(session: UserSession) -> None:
     _SESSIONS[session.user_id] = session
 
 
-def get_active_sessions() -> List[UserSession]:
+def get_active_sessions() -> list[UserSession]:
     return [s for s in _SESSIONS.values() if s.active]
 
 
@@ -161,7 +160,7 @@ def _point_in_region(lat: float, lon: float, region: AffectedRegion) -> bool:
     return False
 
 
-def filter_sessions_by_region(region: AffectedRegion) -> List[UserSession]:
+def filter_sessions_by_region(region: AffectedRegion) -> list[UserSession]:
     return [
         s for s in get_active_sessions()
         if _point_in_region(s.lat, s.lon, region)

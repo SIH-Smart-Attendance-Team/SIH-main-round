@@ -21,8 +21,9 @@ Env vars: WHATSAPP_VERIFY_TOKEN, WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID
 
 import logging
 import os
+
 import httpx
-from fastapi import FastAPI, Request, Response, Query
+from fastapi import FastAPI, Query, Request, Response
 
 from core_agent import CoreAgent
 from voice_service import get_voice_service

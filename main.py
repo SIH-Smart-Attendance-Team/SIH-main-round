@@ -11,16 +11,26 @@ import json
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, confloat
+from pydantic import BaseModel, Field
 
+from auth_db import create_user, get_user_by_email, get_user_by_id, init_db
 from weather_service import WeatherService, get_weather_service
-from auth_db import init_db, create_user, get_user_by_email, get_user_by_id
 
 # Load environment variables from .env file
 load_dotenv()
@@ -68,7 +78,7 @@ def _create_token(user_id: str, email: str) -> str:
 class SignUpRequest(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=4)
-    name: Optional[str] = None
+    name: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -84,7 +94,7 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: str
-    name: Optional[str] = None
+    name: str | None = None
 
 # ---------------------------------------------------------------------------
 # Application
@@ -121,74 +131,74 @@ class HealthResponse(BaseModel):
 
 
 class CurrentWeatherResponse(BaseModel):
-    temperature: Optional[float] = Field(None, description="°C")
-    relative_humidity: Optional[float] = Field(None, description="%")
-    apparent_temperature: Optional[float] = Field(None, description="Feels-like °C")
-    precipitation: Optional[float] = Field(None, description="mm")
-    wind_speed: Optional[float] = Field(None, description="km/h")
-    wind_direction: Optional[float] = Field(None, description="degrees")
-    wind_gusts: Optional[float] = Field(None, description="km/h")
-    weather_code: Optional[int] = None
-    pressure: Optional[float] = Field(None, description="hPa")
-    cloud_cover: Optional[float] = Field(None, description="%")
-    visibility: Optional[float] = Field(None, description="m")
-    dew_point_2m: Optional[float] = Field(None, description="°C")
-    uv_index: Optional[float] = Field(None, description="0-11+")
-    is_day: Optional[int] = Field(None, description="1=day, 0=night")
-    time: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    timezone: Optional[str] = None
+    temperature: float | None = Field(None, description="°C")
+    relative_humidity: float | None = Field(None, description="%")
+    apparent_temperature: float | None = Field(None, description="Feels-like °C")
+    precipitation: float | None = Field(None, description="mm")
+    wind_speed: float | None = Field(None, description="km/h")
+    wind_direction: float | None = Field(None, description="degrees")
+    wind_gusts: float | None = Field(None, description="km/h")
+    weather_code: int | None = None
+    pressure: float | None = Field(None, description="hPa")
+    cloud_cover: float | None = Field(None, description="%")
+    visibility: float | None = Field(None, description="m")
+    dew_point_2m: float | None = Field(None, description="°C")
+    uv_index: float | None = Field(None, description="0-11+")
+    is_day: int | None = Field(None, description="1=day, 0=night")
+    time: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    timezone: str | None = None
 
 
 class AgriMetricsResponse(BaseModel):
-    et0_fao_evapotranspiration: Optional[float] = Field(None, description="mm")
-    soil_temperature_0_to_7cm: Optional[float] = Field(None, description="°C")
-    soil_temperature_7_to_28cm: Optional[float] = Field(None, description="°C")
-    soil_moisture_0_to_7cm: Optional[float] = Field(None, description="m³/m³")
-    soil_moisture_7_to_28cm: Optional[float] = Field(None, description="m³/m³")
-    leaf_wetness_probability: Optional[float] = Field(None, description="%")
-    time: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    et0_fao_evapotranspiration: float | None = Field(None, description="mm")
+    soil_temperature_0_to_7cm: float | None = Field(None, description="°C")
+    soil_temperature_7_to_28cm: float | None = Field(None, description="°C")
+    soil_moisture_0_to_7cm: float | None = Field(None, description="m³/m³")
+    soil_moisture_7_to_28cm: float | None = Field(None, description="m³/m³")
+    leaf_wetness_probability: float | None = Field(None, description="%")
+    time: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class MarineMetricsResponse(BaseModel):
-    wave_height: Optional[float] = Field(None, description="m")
-    wave_direction: Optional[float] = Field(None, description="degrees")
-    swell_wave_height: Optional[float] = Field(None, description="m")
-    swell_wave_direction: Optional[float] = Field(None, description="degrees")
-    sea_surface_temperature: Optional[float] = Field(None, description="°C")
-    wind_gusts: Optional[float] = Field(None, description="km/h")
-    time: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    wave_height: float | None = Field(None, description="m")
+    wave_direction: float | None = Field(None, description="degrees")
+    swell_wave_height: float | None = Field(None, description="m")
+    swell_wave_direction: float | None = Field(None, description="degrees")
+    sea_surface_temperature: float | None = Field(None, description="°C")
+    wind_gusts: float | None = Field(None, description="km/h")
+    time: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class DailyForecastItem(BaseModel):
     date: str
-    temperature_max: Optional[float] = None
-    temperature_min: Optional[float] = None
-    precipitation_sum: Optional[float] = None
-    precipitation_probability_max: Optional[float] = None
-    weather_code: Optional[int] = None
+    temperature_max: float | None = None
+    temperature_min: float | None = None
+    precipitation_sum: float | None = None
+    precipitation_probability_max: float | None = None
+    weather_code: int | None = None
 
 
 class HourlyForecastItem(BaseModel):
     time: str
-    temperature: Optional[float] = None
-    precipitation: Optional[float] = None
-    precipitation_probability: Optional[float] = None
-    weather_code: Optional[int] = None
+    temperature: float | None = None
+    precipitation: float | None = None
+    precipitation_probability: float | None = None
+    weather_code: int | None = None
 
 
 class ForecastResponse(BaseModel):
     latitude: float
     longitude: float
-    timezone: Optional[str] = None
-    current: Optional[CurrentWeatherResponse] = None
-    daily: List[DailyForecastItem] = Field(default_factory=list)
-    hourly: List[HourlyForecastItem] = Field(default_factory=list)
+    timezone: str | None = None
+    current: CurrentWeatherResponse | None = None
+    daily: list[DailyForecastItem] = Field(default_factory=list)
+    hourly: list[HourlyForecastItem] = Field(default_factory=list)
 
 
 class AlertLevel(str, Enum):
@@ -203,15 +213,15 @@ class AlertItem(BaseModel):
     color: str
     title: str
     description: str
-    wind_speed_kmh: Optional[float] = None
-    precipitation_mm: Optional[float] = None
+    wind_speed_kmh: float | None = None
+    precipitation_mm: float | None = None
     issued_at: str
 
 
 class AlertsResponse(BaseModel):
     latitude: float
     longitude: float
-    active_alerts: List[AlertItem]
+    active_alerts: list[AlertItem]
     overall_level: AlertLevel
     timestamp: str
 
@@ -230,18 +240,18 @@ class AlertDraftResponse(BaseModel):
     hazard_type: str
     title: str
     description: str
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: float | None = None
+    longitude: float | None = None
     source: str
-    event_time: Optional[str] = None
+    event_time: str | None = None
     change_type: str
     delivery_status: str
     generated_at: str
-    approved_by: Optional[str] = None
-    approved_at: Optional[str] = None
-    rejected_by: Optional[str] = None
-    rejected_at: Optional[str] = None
-    rejection_reason: Optional[str] = None
+    approved_by: str | None = None
+    approved_at: str | None = None
+    rejected_by: str | None = None
+    rejected_at: str | None = None
+    rejection_reason: str | None = None
     audit_log: list = Field(default_factory=list, description="Audit trail of draft actions")
     delivery_results: list = Field(default_factory=list, description="Per-channel delivery status per user (populated after dispatch)")
 
@@ -252,7 +262,7 @@ class AlertApprovalRequest(BaseModel):
 
 class AlertRejectionRequest(BaseModel):
     rejected_by: str = Field(..., min_length=1, description="Human reviewer identity")
-    reason: Optional[str] = Field(None, description="Optional rejection reason")
+    reason: str | None = Field(None, description="Optional rejection reason")
 
 
 # ---------------------------------------------------------------------------
@@ -262,15 +272,15 @@ class AlertRejectionRequest(BaseModel):
 def _evaluate_alerts(
     lat: float,
     lon: float,
-    wind_speed: Optional[float],
-    precipitation: Optional[float],
+    wind_speed: float | None,
+    precipitation: float | None,
 ) -> AlertsResponse:
     """
     Derive colour-coded alerts from current wind and precipitation.
     Thresholds are indicative and can be tuned for production.
     """
     now = datetime.now(timezone.utc).isoformat()
-    alerts: List[AlertItem] = []
+    alerts: list[AlertItem] = []
 
     wind = wind_speed or 0.0
     precip = precipitation or 0.0
@@ -399,7 +409,7 @@ def _evaluate_alerts(
 async def signup(
     email: str = Form(..., min_length=3),
     password: str = Form(..., min_length=4),
-    name: Optional[str] = Form(None),
+    name: str | None = Form(None),
 ) -> TokenResponse:
     """Create a new user account and return a JWT token."""
     existing = get_user_by_email(email)
@@ -760,15 +770,15 @@ async def disaster_alerts(
 
 @app.get(
     "/api/v1/alerts/drafted",
-    response_model=List[AlertDraftResponse],
+    response_model=list[AlertDraftResponse],
     tags=["Alerts"],
     summary="List drafted disaster warning alerts pending human review",
 )
 async def list_draft_alerts(
-    delivery_status: Optional[str] = Query(None, description="draft | approved | rejected"),
-    severity: Optional[str] = Query(None, description="green | yellow | orange | red"),
-    language: Optional[str] = Query(None, description="Target language"),
-    event_id: Optional[str] = Query(None, description="Filter by source event ID"),
+    delivery_status: str | None = Query(None, description="draft | approved | rejected"),
+    severity: str | None = Query(None, description="green | yellow | orange | red"),
+    language: str | None = Query(None, description="Target language"),
+    event_id: str | None = Query(None, description="Filter by source event ID"),
     limit: int = Query(100, ge=1, le=500),
 ):
     """
@@ -897,7 +907,7 @@ async def reject_alert(
 
 def _serialize_alert_doc(alert: dict) -> dict:
     """Convert a Mongo alert document to the API response shape."""
-    def _iso(value: Any) -> Optional[str]:
+    def _iso(value: Any) -> str | None:
         if value is None:
             return None
         if isinstance(value, datetime):
@@ -964,8 +974,8 @@ async def get_voice_advisory(
       4. Text-to-speech via VoiceService (Bhashini → gTTS fallback)
       5. Return JSON with native/English advisory text + base64 audio
     """
-    from voice_service import get_voice_service
     from AI_engine import generate_weather_advisory
+    from voice_service import get_voice_service
 
     audio_bytes = await audio.read()
 
@@ -1080,7 +1090,7 @@ async def get_text_advisory(
 # ---------------------------------------------------------------------------
 
 try:
-    from weathergpt_expert import WeatherGPTExpert, get_expert
+    from weathergpt_expert import get_expert
 
     _expert = get_expert()
 
@@ -1096,8 +1106,8 @@ try:
         persona: str = Form("general"),
         lang: str = Form("en"),
         query: str = Form(...),
-        history_json: Optional[str] = Form(None),
-        location_name: Optional[str] = Form(None),
+        history_json: str | None = Form(None),
+        location_name: str | None = Form(None),
     ):
         """
         Text chat with the WeatherGPT expert.
@@ -1140,8 +1150,8 @@ try:
         persona: str = Form("general"),
         lang: str = Form("en"),
         query: str = Form(...),
-        history_json: Optional[str] = Form(None),
-        location_name: Optional[str] = Form(None),
+        history_json: str | None = Form(None),
+        location_name: str | None = Form(None),
     ):
         """
         Streaming text chat with the WeatherGPT expert.
@@ -1175,8 +1185,8 @@ try:
         persona: str = Form("general"),
         lang: str = Form("en"),
         audio: UploadFile = File(...),
-        history_json: Optional[str] = Form(None),
-        location_name: Optional[str] = Form(None),
+        history_json: str | None = Form(None),
+        location_name: str | None = Form(None),
     ):
         """
         Voice chat with the WeatherGPT expert.
@@ -1224,8 +1234,8 @@ try:
         persona: str = Form("general"),
         lang: str = Form("en"),
         file: UploadFile = File(...),
-        prompt: Optional[str] = Form(None),
-        history_json: Optional[str] = Form(None),
+        prompt: str | None = Form(None),
+        history_json: str | None = Form(None),
     ):
         """
         Analyze uploaded files (images, PDFs, CSVs) with the WeatherGPT expert.

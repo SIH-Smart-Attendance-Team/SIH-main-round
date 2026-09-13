@@ -6,19 +6,13 @@ confidence streak, distress sentiment, turn limits, and handoff summary.
 """
 
 from escalation_engine import (
-    EscalationEngine,
-    EscalationDecision,
-    ConversationTurn,
-    ConversationState,
-    Queue,
-    Priority,
-    EMERGENCY_KEYWORDS,
-    COMPLEX_AGRI_INTENTS,
-    EXPLICIT_HUMAN_PHRASES,
     LOW_CONFIDENCE_THRESHOLD,
-    LOW_CONFIDENCE_STREAK_LIMIT,
     MAX_TURNS_BEFORE_ESCALATION_CHECK,
-    DISTRESS_SENTIMENT_THRESHOLD,
+    ConversationState,
+    ConversationTurn,
+    EscalationEngine,
+    Priority,
+    Queue,
 )
 
 

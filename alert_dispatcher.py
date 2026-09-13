@@ -28,9 +28,12 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from webhooks import UserSession
 
 load_dotenv()
 
@@ -60,7 +63,7 @@ class AlertDispatcher:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def dispatch_approved_alert(self, alert_id: str) -> Dict[str, Any]:
+    async def dispatch_approved_alert(self, alert_id: str) -> dict[str, Any]:
         """
         Dispatch an approved alert to all affected users.
 
@@ -154,10 +157,10 @@ class AlertDispatcher:
 
     async def _dispatch_to_user(
         self,
-        session: "UserSession",
-        alert_doc: Dict[str, Any],
+        session: UserSession,
+        alert_doc: dict[str, Any],
         script_text: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Dispatch the alert to a single user via their registered channel."""
         channel = session.channel
         address = session.address
@@ -271,17 +274,17 @@ class AlertDispatcher:
 
     async def _dispatch_guarded(
         self,
-        session: "UserSession",
-        alert_doc: Dict[str, Any],
+        session: UserSession,
+        alert_doc: dict[str, Any],
         script_text: str,
         semaphore: asyncio.Semaphore,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Wrap _dispatch_to_user with a semaphore for bounded concurrency."""
         async with semaphore:
             try:
                 return await self._dispatch_to_user(session, alert_doc, script_text)
             except Exception as exc:
-                logger.exception("Dispatch to %s failed: %s", session.user_id, exc)
+                logger.exception("Dispatch to %s failed", session.user_id)
                 return {
                     "user_id": session.user_id,
                     "channel": session.channel,
@@ -296,7 +299,7 @@ class AlertDispatcher:
 # Module-level singleton + helper
 # ---------------------------------------------------------------------------
 
-_dispatcher: Optional[AlertDispatcher] = None
+_dispatcher: AlertDispatcher | None = None
 
 
 def get_alert_dispatcher() -> AlertDispatcher:
@@ -307,6 +310,6 @@ def get_alert_dispatcher() -> AlertDispatcher:
     return _dispatcher
 
 
-async def dispatch_approved_alert(alert_id: str) -> Dict[str, Any]:
+async def dispatch_approved_alert(alert_id: str) -> dict[str, Any]:
     """Module-level convenience wrapper for the approve endpoint."""
     return await get_alert_dispatcher().dispatch_approved_alert(alert_id)

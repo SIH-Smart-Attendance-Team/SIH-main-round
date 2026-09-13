@@ -12,11 +12,16 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Optional, Any
+from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
+from motor.motor_asyncio import (
+    AsyncIOMotorClient,
+    AsyncIOMotorCollection,
+    AsyncIOMotorDatabase,
+)
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from pymongo.errors import PyMongoError
 
@@ -28,7 +33,7 @@ class MongoManager:
 
     def __init__(
         self,
-        url: Optional[str] = None,
+        url: str | None = None,
         database: str = "weathergpt",
         max_pool_size: int = 50,
         min_pool_size: int = 10,
@@ -39,8 +44,8 @@ class MongoManager:
             raise ValueError("MONGO_URL environment variable not set")
 
         self._database_name = database
-        self._client: Optional[AsyncIOMotorClient] = None
-        self._db: Optional[AsyncIOMotorDatabase] = None
+        self._client: AsyncIOMotorClient | None = None
+        self._db: AsyncIOMotorDatabase | None = None
         self._max_pool_size = max_pool_size
         self._min_pool_size = min_pool_size
         self._server_selection_timeout_ms = server_selection_timeout_ms
@@ -163,7 +168,7 @@ class MongoManager:
 
     async def store_advisory(
         self,
-        location_id: Optional[int],
+        location_id: int | None,
         lat: float,
         lon: float,
         source_lang: str,
@@ -201,7 +206,7 @@ class MongoManager:
         source_lang: str,
         target_lang: str,
         max_age_minutes: int = 60,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Find a recent advisory for the same location and languages within max_age_minutes."""
         from datetime import timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
@@ -235,11 +240,11 @@ class MongoManager:
         severity: str,
         title: str,
         description: str,
-        lat: Optional[float] = None,
-        lon: Optional[float] = None,
-        location_id: Optional[int] = None,
-        raw_json: Optional[dict] = None,
-        timestamp: Optional[datetime] = None,
+        lat: float | None = None,
+        lon: float | None = None,
+        location_id: int | None = None,
+        raw_json: dict | None = None,
+        timestamp: datetime | None = None,
     ) -> str:
         """Store a disaster bulletin. Returns the inserted document ID."""
         doc = {
@@ -260,10 +265,10 @@ class MongoManager:
 
     async def get_bulletins(
         self,
-        source: Optional[str] = None,
-        type_: Optional[str] = None,
-        severity: Optional[str] = None,
-        since: Optional[datetime] = None,
+        source: str | None = None,
+        type_: str | None = None,
+        severity: str | None = None,
+        since: datetime | None = None,
         limit: int = 100,
     ) -> list[dict]:
         """Query bulletins with optional filters."""
@@ -293,11 +298,11 @@ class MongoManager:
         hazard_type: str,
         title: str,
         description: str,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
         source: str = "disaster_tools",
-        event_time: Optional[datetime] = None,
-        raw_event: Optional[dict] = None,
+        event_time: datetime | None = None,
+        raw_event: dict | None = None,
         change_type: str = "new",
     ) -> str:
         """Store a drafted alert pending human approval. Returns document ID."""
@@ -341,11 +346,11 @@ class MongoManager:
     async def get_draft_alerts(
         self,
         *,
-        delivery_status: Optional[str] = None,
-        severity: Optional[str] = None,
-        language: Optional[str] = None,
-        event_id: Optional[str] = None,
-        since: Optional[datetime] = None,
+        delivery_status: str | None = None,
+        severity: str | None = None,
+        language: str | None = None,
+        event_id: str | None = None,
+        since: datetime | None = None,
         limit: int = 100,
     ) -> list[dict]:
         """Query drafted alerts with optional filters."""
@@ -363,7 +368,7 @@ class MongoManager:
         cursor = self.alerts.find(query).sort("generated_at", DESCENDING).limit(limit)
         return await cursor.to_list(length=limit)
 
-    async def get_alert_by_id(self, alert_id: str) -> Optional[dict]:
+    async def get_alert_by_id(self, alert_id: str) -> dict | None:
         """Get a single drafted alert by Mongo object ID."""
         from bson import ObjectId
 
@@ -377,7 +382,7 @@ class MongoManager:
         self,
         alert_id: str,
         approved_by: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Mark a drafted alert as approved by a human reviewer."""
         from bson import ObjectId
 
@@ -413,8 +418,8 @@ class MongoManager:
         self,
         alert_id: str,
         rejected_by: str,
-        reason: Optional[str] = None,
-    ) -> Optional[dict]:
+        reason: str | None = None,
+    ) -> dict | None:
         """Mark a drafted alert as rejected by a human reviewer."""
         from bson import ObjectId
 
@@ -452,15 +457,16 @@ class MongoManager:
         self,
         alert_id: str,
         results: list[dict],
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """
         Record per-channel delivery status for an approved alert.
 
         Called by alert_dispatcher.py after the fan-out completes.
         Appends to the delivery_results array and pushes audit entries.
         """
-        from bson import ObjectId
         from datetime import datetime, timezone
+
+        from bson import ObjectId
 
         now = datetime.now(timezone.utc)
         try:
@@ -510,7 +516,7 @@ class MongoManager:
         return await self.get_alert_by_id(alert_id)
 
 
-_mongo_manager: Optional[MongoManager] = None
+_mongo_manager: MongoManager | None = None
 
 
 def get_mongo_manager() -> MongoManager:

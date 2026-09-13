@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response, status
 from twilio.request_validator import RequestValidator
@@ -109,9 +108,9 @@ def _normalize_phone(raw: str) -> str:
 @app.post("/sms/incoming", response_class=Response)
 async def sms_incoming(
     request: Request,
-    From: Optional[str] = Form(None),
-    Body: Optional[str] = Form(None),
-    SmsStatus: Optional[str] = Form(None),
+    From: str | None = Form(None),
+    Body: str | None = Form(None),
+    SmsStatus: str | None = Form(None),
 ) -> Response:
     """
     Twilio posts application/x-www-form-urlencoded data when an SMS arrives.
@@ -151,7 +150,7 @@ async def sms_incoming(
 
         return _twiml_reply(reply.text)
 
-    except Exception as exc:
+    except Exception:
         logger.exception("SMS webhook handling failed for %s", caller)
         error_msg = (
             "क्षमा करें, अभी एऋो सेवा उपलब्ध नहीं है। कृपया थोड़ी देर बाद प्रयास करें।\n"
