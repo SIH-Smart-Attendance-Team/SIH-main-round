@@ -16,49 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    services:
-      postgres:
-        image: postgis/postgis:16-3.4
-        env:
-          POSTGRES_DB: weathergpt
-          POSTGRES_USER: weathergpt
-          POSTGRES_PASSWORD: weathergpt_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U weathergpt -d weathergpt"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      mongo:
-        image: mongo:7.0
-        env:
-          MONGO_INITDB_DATABASE: weathergpt
-          MONGO_INITDB_ROOT_USERNAME: weathergpt
-          MONGO_INITDB_ROOT_PASSWORD: weathergpt_test
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")' -u weathergpt -p weathergpt_test --authenticationDatabase admin"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      timescaledb:
-        image: timescale/timescaledb:2.17.0-pg16
-        env:
-          POSTGRES_DB: weathergpt_ts
-          POSTGRES_USER: weathergpt
-          POSTGRES_PASSWORD: weathergpt_test
-          POSTGRES_INITDB_ARGS: "--timescaledb-telemetry-enabled=false"
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U weathergpt -d weathergpt_ts"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # DB managers are mocked in tests/conftest.py — no real Postgres/Mongo/TimescaleDB
+    # needed for this test suite. If integration tests against real databases are added
+    # later, reintroduce service containers only for that dedicated job.
 
     steps:
       - name: Checkout repository
@@ -82,9 +42,6 @@ jobs:
 
       - name: Run tests (pytest)
         env:
-          POSTGRES_URL: postgresql+asyncpg://weathergpt:weathergpt_test@localhost:5432/weathergpt
-          MONGO_URL: mongodb://weathergpt:weathergpt_test@localhost:27017/weathergpt?authSource=admin
-          TIMESCALE_URL: postgresql+asyncpg://weathergpt:weathergpt_test@localhost:5433/weathergpt_ts
           JWT_SECRET: test-secret
           GOOGLE_API_KEY: ""
           GEMINI_API_KEY: ""
