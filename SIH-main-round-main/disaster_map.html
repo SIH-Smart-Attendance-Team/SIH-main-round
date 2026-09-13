@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WeatherGPT — Hazard Map</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg: #0B1220;
+    --panel: #121A2B;
+    --panel-2: #17203380;
+    --border: #223049;
+    --text: #E8EDF6;
+    --text-muted: #8CA3C4;
+    --green: #2E9E5B;
+    --yellow: #E4B92F;
+    --orange: #E8720C;
+    --red: #D8402A;
+    --accent: #4C8DFF;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; height: 100%; width: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  .app { display: flex; height: 100vh; width: 100vw; position: relative; }
+
+  /* ── Side panel ───────────────────────────────────────────── */
+  .panel {
+    width: 340px; min-width: 340px; height: 100%;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    z-index: 500;
+    transition: margin-left 0.25s ease;
+  }
+  .panel.collapsed { margin-left: -340px; }
+
+  .panel-header {
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-header h1 {
+    font-size: 17px; font-weight: 600; margin: 0 0 3px;
+    letter-spacing: 0.01em;
+  }
+  .panel-header p {
+    font-size: 12.5px; color: var(--text-muted); margin: 0;
+  }
+
+  .status-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 18px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .status-row .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); margin-right: 6px;
+  }
+  .status-row.offline .dot { background: var(--red); }
+  .refresh-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    font-family: inherit; font-size: 11.5px; padding: 4px 10px; border-radius: 5px;
+    cursor: pointer;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--text); }
+
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+  }
+  .chip {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-muted);
+    cursor: pointer; user-select: none; background: transparent;
+  }
+  .chip.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
+  .alert-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+  .alert-card {
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+    cursor: pointer; display: flex; gap: 10px; align-items: flex-start;
+  }
+  .alert-card:hover { background: var(--panel-2); }
+  .sev-dot {
+    width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0;
+  }
+  .alert-card .title { font-size: 13.5px; font-weight: 500; margin: 0 0 3px; line-height: 1.35; }
+  .alert-card .meta {
+    font-size: 11.5px; color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .alert-card .desc { font-size: 12px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
+
+  .empty-state {
+    padding: 30px 18px; color: var(--text-muted); font-size: 13px; text-align: center;
+  }
+
+  /* ── Map ──────────────────────────────────────────────────── */
+  #map { flex: 1; height: 100%; background: var(--bg); }
+
+  .panel-toggle {
+    position: absolute; top: 16px; left: 16px; z-index: 600;
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    width: 34px; height: 34px; border-radius: 6px; cursor: pointer; font-size: 15px;
+    display: none;
+  }
+  .app.panel-hidden-mobile .panel-toggle { display: block; }
+
+  .legend {
+    position: absolute; bottom: 20px; left: 16px; z-index: 500;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 12px; color: var(--text-muted);
+  }
+  .legend .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .legend .swatch { width: 14px; height: 14px; flex-shrink: 0; }
+  .legend-title { color: var(--text); font-weight: 500; font-size: 12.5px; margin-bottom: 6px; }
+
+  .locate-btn {
+    position: absolute; bottom: 20px; right: 16px; z-index: 500;
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 9px 16px; border-radius: 8px; font-family: inherit; font-size: 13px;
+    cursor: pointer;
+  }
+  .locate-btn:hover { border-color: var(--accent); }
+
+  .leaflet-popup-content-wrapper {
+    background: var(--panel); color: var(--text); border-radius: 8px;
+  }
+  .leaflet-popup-tip { background: var(--panel); }
+  .popup-title { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+  .popup-meta { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--text-muted); }
+  .popup-desc { font-size: 12.5px; margin-top: 6px; line-height: 1.4; }
+
+  @media (max-width: 760px) {
+    .panel { position: absolute; left: 0; top: 0; z-index: 700; }
+    .app.panel-hidden-mobile .panel { margin-left: -340px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app panel-hidden-mobile" id="app">
+
+  <button class="panel-toggle" id="panelToggle">☰</button>
+
+  <div class="panel" id="panel">
+    <div class="panel-header">
+      <h1>Hazard map</h1>
+      <p>Live disaster and severe-weather zones near you</p>
+    </div>
+
+    <div class="status-row" id="statusRow">
+      <span><span class="dot"></span><span id="statusText">Loading…</span></span>
+      <button class="refresh-btn" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="filters" id="filters">
+      <button class="chip active" data-type="all">All</button>
+      <button class="chip active" data-type="cyclone">Cyclone</button>
+      <button class="chip active" data-type="earthquake">Earthquake</button>
+      <button class="chip active" data-type="flood">Flood</button>
+      <button class="chip active" data-type="thunderstorm_risk">Thunderstorm</button>
+      <button class="chip active" data-type="drought">Drought</button>
+    </div>
+
+    <div class="alert-list" id="alertList">
+      <div class="empty-state">Loading nearby hazards…</div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="legend">
+    <div class="legend-title">Severity</div>
+    <div class="row"><span class="swatch" style="background:#2E9E5B;border-radius:50%;"></span>Green — no action needed</div>
+    <div class="row"><span class="swatch" style="background:#E4B92F;border-radius:50%;"></span>Yellow — watch</div>
+    <div class="row"><span class="swatch" style="background:#E8720C;border-radius:50%;"></span>Orange — be prepared</div>
+    <div class="row"><span class="swatch" style="background:#D8402A;border-radius:50%;"></span>Red — take action</div>
+  </div>
+
+  <button class="locate-btn" id="locateBtn">Use my location</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIG — point this at your backend once it's wired up.
+// The endpoint should return the same shape as disaster_tools.py's
+// get_disaster_alerts(): {"alerts": [...], "sources_ok": [...], ...}
+// ═══════════════════════════════════════════════════════════════════════
+const ALERTS_ENDPOINT = "/api/v1/disaster/alerts";// GET ?latitude=&longitude=&radius_km=
+const DEFAULT_CENTER = [22.9734, 78.6569]; // India centroid
+const DEFAULT_ZOOM = 5;
+const REFRESH_MS = 5 * 60 * 1000; // auto-refresh every 5 minutes
+
+// Shown until the backend is wired up, so the map isn't blank on first run.
+// Delete this once ALERTS_ENDPOINT is live.
+const MOCK_ALERTS = {
+  alerts: [
+    { hazard_type: "cyclone", severity: "orange", title: "Cyclonic storm tracking toward the east coast",
+      description: "Demo data — replace with live GDACS feed.", latitude: 17.7, longitude: 83.3,
+      distance_km: 210, source: "GDACS (mock)", event_time: new Date().toISOString(), url: null },
+    { hazard_type: "earthquake", severity: "yellow", title: "M4.8 earthquake — Uttarakhand region",
+      description: "Depth 10 km. Demo data.", latitude: 30.3, longitude: 79.0,
+      distance_km: 640, source: "USGS (mock)", event_time: new Date().toISOString(), url: null },
+    { hazard_type: "flood", severity: "red", title: "Severe flooding — Assam river basin",
+      description: "Demo data — replace with live GDACS feed.", latitude: 26.2, longitude: 92.9,
+      distance_km: 980, source: "GDACS (mock)", event_time: new Date().toISOString(), url: null },
+    { hazard_type: "thunderstorm_risk", severity: "yellow", title: "Elevated thunderstorm / lightning risk (modeled, next 24h)",
+      description: "Demo data — this hazard type is always a forecast proxy, never confirmed strikes.",
+      latitude: 22.97, longitude: 78.65, distance_km: 0, source: "Open-Meteo (mock)",
+      event_time: new Date().toISOString(), url: null },
+  ],
+  sources_ok: ["mock"], sources_failed: [], generated_at: new Date().toISOString(),
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Map setup
+// ═══════════════════════════════════════════════════════════════════════
+const map = L.map('map', { zoomControl: false }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  subdomains: 'abcd', maxZoom: 19,
+}).addTo(map);
+
+let markerLayer = L.layerGroup().addTo(map);
+let currentAlerts = [];
+let activeFilters = new Set(["cyclone", "earthquake", "flood", "thunderstorm_risk", "drought"]);
+let userLocation = null;
+
+// Hazard shape glyphs (not color alone — accessible + meaningful at a glance)
+const HAZARD_GLYPH = {
+  cyclone: "M12 2a10 10 0 1 0 0.01 0zM12 6a6 6 0 1 1-4.24 10.24A6 6 0 0 1 12 6z",
+  earthquake: "M2 12h4l2-6 3 12 3-9 2 5 2-3h4",
+  flood: "M2 15c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4-2 2-2 4-2M2 19c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4-2 2-2 4-2",
+  thunderstorm_risk: "M13 2 4 14h6l-1 8 9-12h-6l1-8z",
+  drought: "M12 3v6M8 6l4-3 4 3M5 14a7 7 0 0 1 14 0c0 3-3 5-3 7H8c0-2-3-4-3-7z",
+  default: "M12 2 2 21h20z",
+};
+
+function hazardIcon(hazardType, color) {
+  const path = HAZARD_GLYPH[hazardType] || HAZARD_GLYPH.default;
+  const strokeFill = hazardType === 'flood' || hazardType === 'thunderstorm_risk' ? 'none' : color;
+  const strokeAttr = hazardType === 'flood' || hazardType === 'thunderstorm_risk'
+    ? `stroke="${color}" stroke-width="2" fill="none"` : `fill="${color}"`;
+  const svg = `
+    <svg width="30" height="30" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="11" fill="${color}22" stroke="${color}" stroke-width="1.5"/>
+      <path d="${path}" ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" transform="scale(0.6) translate(8,8)"/>
+    </svg>`;
+  return L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15] });
+}
+
+const SEVERITY_COLOR = { green: "#2E9E5B", yellow: "#E4B92F", orange: "#E8720C", red: "#D8402A" };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Data fetching
+// ═══════════════════════════════════════════════════════════════════════
+async function fetchAlerts(lat, lon, radiusKm = 500) {
+  const statusEl = document.getElementById('statusRow');
+  const statusText = document.getElementById('statusText');
+  try {
+    const url = `${ALERTS_ENDPOINT}?latitude=${lat}&longitude=${lon}&radius_km=${radiusKm}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    statusEl.classList.remove('offline');
+    statusText.textContent = `Live — updated ${new Date().toLocaleTimeString()}`;
+    return data;
+  } catch (err) {
+    console.warn('Falling back to demo data — backend not reachable yet:', err.message);
+    statusEl.classList.add('offline');
+    statusText.textContent = 'Demo data (backend not connected)';
+    return MOCK_ALERTS;
+  }
+}
+
+function renderMarkers(alerts) {
+  markerLayer.clearLayers();
+  alerts
+    .filter(a => activeFilters.has(a.hazard_type))
+    .forEach(a => {
+      const color = a.color || SEVERITY_COLOR[a.severity] || SEVERITY_COLOR.green;
+      const marker = L.marker([a.latitude, a.longitude], { icon: hazardIcon(a.hazard_type, color) });
+      marker.bindPopup(`
+        <div class="popup-title">${escapeHtml(a.title || a.hazard_type)}</div>
+        <div class="popup-meta">${a.source || ''} • ${a.distance_km != null ? a.distance_km + ' km away' : ''}</div>
+        ${a.description ? `<div class="popup-desc">${escapeHtml(a.description)}</div>` : ''}
+        ${a.url ? `<div style="margin-top:6px;"><a href="${a.url}" target="_blank" rel="noopener" style="color:#4C8DFF;font-size:12px;">Full report</a></div>` : ''}
+      `);
+      marker.addTo(markerLayer);
+      a._marker = marker;
+    });
+}
+
+function renderList(alerts) {
+  const listEl = document.getElementById('alertList');
+  const visible = alerts.filter(a => activeFilters.has(a.hazard_type));
+  if (visible.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">No active hazards match the current filters nearby.</div>`;
+    return;
+  }
+  listEl.innerHTML = visible.map((a, i) => `
+    <div class="alert-card" data-idx="${alerts.indexOf(a)}">
+      <span class="sev-dot" style="background:${a.color || SEVERITY_COLOR[a.severity]}"></span>
+      <div>
+        <p class="title">${escapeHtml(a.title || a.hazard_type)}</p>
+        <div class="meta">${a.distance_km != null ? a.distance_km + ' km' : ''} · ${a.source || ''}</div>
+        ${a.description ? `<div class="desc">${escapeHtml(a.description)}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('.alert-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const a = alerts[parseInt(card.dataset.idx, 10)];
+      map.flyTo([a.latitude, a.longitude], 8, { duration: 0.6 });
+      if (a._marker) a._marker.openPopup();
+    });
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+
+async function refresh() {
+  const center = userLocation || DEFAULT_CENTER;
+  const data = await fetchAlerts(center[0], center[1]);
+  currentAlerts = data.alerts || [];
+  renderMarkers(currentAlerts);
+  renderList(currentAlerts);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// UI wiring
+// ═══════════════════════════════════════════════════════════════════════
+document.getElementById('refreshBtn').addEventListener('click', refresh);
+
+document.getElementById('panelToggle').addEventListener('click', () => {
+  document.getElementById('app').classList.toggle('panel-hidden-mobile');
+});
+
+document.getElementById('filters').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const type = chip.dataset.type;
+
+  if (type === 'all') {
+    activeFilters = new Set(["cyclone", "earthquake", "flood", "thunderstorm_risk", "drought"]);
+    document.querySelectorAll('.chip').forEach(c => c.classList.add('active'));
+  } else {
+    chip.classList.toggle('active');
+    if (chip.classList.contains('active')) activeFilters.add(type);
+    else activeFilters.delete(type);
+    document.querySelector('.chip[data-type="all"]').classList.toggle(
+      'active', activeFilters.size === 5
+    );
+  }
+  renderMarkers(currentAlerts);
+  renderList(currentAlerts);
+});
+
+document.getElementById('locateBtn').addEventListener('click', () => {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition((pos) => {
+    userLocation = [pos.coords.latitude, pos.coords.longitude];
+    map.setView(userLocation, 8);
+    L.circleMarker(userLocation, { radius: 6, color: '#4C8DFF', fillColor: '#4C8DFF', fillOpacity: 0.9 }).addTo(map);
+    refresh();
+  });
+});
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

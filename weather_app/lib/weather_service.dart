@@ -10,7 +10,7 @@ import 'offline_service.dart';
 
 const String kBackendBaseUrl = String.fromEnvironment(
   'BACKEND_URL',
-  defaultValue: 'http://10.0.2.2:8000',
+  defaultValue: 'http://10.142.255.156:8000',
 );
 
 const String _kBackendUrlKey = 'backend_url';
@@ -51,6 +51,8 @@ class BackendConfig {
 
 const String kOpenMeteoUrl = 'https://api.open-meteo.com/v1/forecast';
 const String kOpenMeteoMarineUrl = 'https://marine-api.open-meteo.com/v1/marine';
+
+const String kStormGlassUrl = 'https://api.stormglass.io/v2/weather/point';
 
 class WeatherService {
   final http.Client _client;
@@ -252,7 +254,7 @@ class WeatherService {
   }
 
   Future<MarineMetrics> fetchMarineMetrics(double lat, double lon) async {
-    // Try backend first
+    // Try backend first (it may enrich with Open-Meteo + StormGlass)
     try {
       final res = await _get('/api/v1/weather/marine?lat=$lat&lon=$lon')
           .timeout(const Duration(seconds: 8));
@@ -261,18 +263,33 @@ class WeatherService {
         return MarineMetrics.fromJson(data);
       }
     } catch (e) {
-      debugPrint('Backend marine failed, using Open-Meteo marine fallback: $e');
+      debugPrint('Backend marine failed, trying fallbacks: $e');
     }
 
-    // Fallback: direct Open-Meteo Marine API
+    // Fallback 1: direct Open-Meteo Marine API
+    final openMeteoData = await _fetchOpenMeteoMarine(lat, lon);
+
+    // Fallback 2: StormGlass API (enrichment for wave period & additional detail)
+    final stormGlassData = await _fetchStormGlassMarine(lat, lon);
+
+    // Merge: StormGlass fills gaps where Open-Meteo is missing data
+    final merged = <String, dynamic>{...openMeteoData};
+    for (final entry in stormGlassData.entries) {
+      if (merged[entry.key] == null) merged[entry.key] = entry.value;
+    }
+
+    if (merged.isNotEmpty) return MarineMetrics.fromJson(merged);
+    return MarineMetrics();
+  }
+
+  Future<Map<String, dynamic>> _fetchOpenMeteoMarine(double lat, double lon) async {
     try {
       final uri = Uri.parse(
           '$kOpenMeteoMarineUrl?latitude=$lat&longitude=$lon'
           '&current=wave_height,wave_direction,swell_wave_height,'
-          'swell_wave_direction,sea_surface_temperature&timezone=auto');
-      final res = await _client
-          .get(uri)
-          .timeout(const Duration(seconds: 12));
+          'swell_wave_direction,sea_surface_temperature,wave_period,wave_peak_period'
+          '&timezone=auto');
+      final res = await _client.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         final current = data['current'] as Map<String, dynamic>? ?? {};
@@ -282,6 +299,8 @@ class WeatherService {
           'swell_wave_height': current['swell_wave_height'],
           'swell_wave_direction': current['swell_wave_direction'],
           'sea_surface_temperature': current['sea_surface_temperature'],
+          'wave_period': current['wave_period'],
+          'wave_peak_period': current['wave_peak_period'],
         };
 
         // Also fetch wind gusts from the regular forecast API
@@ -289,9 +308,7 @@ class WeatherService {
           final gustsUri = Uri.parse(
               '$kOpenMeteoUrl?latitude=$lat&longitude=$lon'
               '&current=wind_gusts_10m&timezone=auto');
-          final gustsRes = await _client
-              .get(gustsUri)
-              .timeout(const Duration(seconds: 8));
+          final gustsRes = await _client.get(gustsUri).timeout(const Duration(seconds: 8));
           if (gustsRes.statusCode == 200) {
             final gustsData = jsonDecode(gustsRes.body) as Map<String, dynamic>;
             final gustsCurrent = gustsData['current'] as Map<String, dynamic>? ?? {};
@@ -301,13 +318,43 @@ class WeatherService {
           debugPrint('Marine wind gusts fetch failed: $e');
         }
 
-        return MarineMetrics.fromJson(marine);
+        return marine;
       }
     } catch (e) {
-      debugPrint('Open-Meteo marine fallback failed: $e');
+      debugPrint('Open-Meteo marine fetch failed: $e');
     }
+    return {};
+  }
 
-    return MarineMetrics();
+  Future<Map<String, dynamic>> _fetchStormGlassMarine(double lat, double lon) async {
+    const apiKey = String.fromEnvironment('STORMGLASS_API_KEY', defaultValue: '');
+    if (apiKey.isEmpty) return {};
+    try {
+      final uri = Uri.parse(
+          '$kStormGlassUrl?lat=$lat&lng=$lon'
+          '&params=waveHeight,waveDirection,wavePeriod,swellHeight,waterTemperature,currentSpeed,currentDirection'
+          '&source=sg');
+      final res = await _client
+          .get(uri, headers: {'Authorization': apiKey})
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final hours = data['hours'] as List<dynamic>? ?? [];
+        if (hours.isNotEmpty) {
+          final current = hours[0] as Map<String, dynamic>;
+          return {
+            'wave_height': current['waveHeight'],
+            'wave_direction': current['waveDirection'],
+            'wave_period': current['wavePeriod'],
+            'swell_wave_height': current['swellHeight'],
+            'sea_surface_temperature': current['waterTemperature'],
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('StormGlass marine fetch failed: $e');
+    }
+    return {};
   }
 
   Future<List<AlertItem>> fetchAlerts(double lat, double lon) async {
@@ -674,27 +721,33 @@ class MarineMetrics {
   final double? waveDirection;
   final double? swellWaveHeight;
   final double? swellWaveDirection;
-  final double? seaSurfaceTemperature;
-  final double? windGusts;
+   final double? seaSurfaceTemperature;
+   final double? windGusts;
+   final double? wavePeriod;
+   final double? wavePeakPeriod;
 
-  MarineMetrics({
-    this.waveHeight,
-    this.waveDirection,
-    this.swellWaveHeight,
-    this.swellWaveDirection,
-    this.seaSurfaceTemperature,
-    this.windGusts,
-  });
+   MarineMetrics({
+     this.waveHeight,
+     this.waveDirection,
+     this.swellWaveHeight,
+     this.swellWaveDirection,
+     this.seaSurfaceTemperature,
+     this.windGusts,
+     this.wavePeriod,
+     this.wavePeakPeriod,
+   });
 
-  factory MarineMetrics.fromJson(Map<String, dynamic> data) => MarineMetrics(
-        waveHeight: (data['wave_height'] as num?)?.toDouble(),
-        waveDirection: (data['wave_direction'] as num?)?.toDouble(),
-        swellWaveHeight: (data['swell_wave_height'] as num?)?.toDouble(),
-        swellWaveDirection: (data['swell_wave_direction'] as num?)?.toDouble(),
-        seaSurfaceTemperature:
-            (data['sea_surface_temperature'] as num?)?.toDouble(),
-        windGusts: (data['wind_gusts'] as num?)?.toDouble(),
-      );
+   factory MarineMetrics.fromJson(Map<String, dynamic> data) => MarineMetrics(
+         waveHeight: (data['wave_height'] as num?)?.toDouble(),
+         waveDirection: (data['wave_direction'] as num?)?.toDouble(),
+         swellWaveHeight: (data['swell_wave_height'] as num?)?.toDouble(),
+         swellWaveDirection: (data['swell_wave_direction'] as num?)?.toDouble(),
+         seaSurfaceTemperature:
+             (data['sea_surface_temperature'] as num?)?.toDouble(),
+         windGusts: (data['wind_gusts'] as num?)?.toDouble(),
+         wavePeriod: (data['wave_period'] as num?)?.toDouble(),
+         wavePeakPeriod: (data['wave_peak_period'] as num?)?.toDouble(),
+       );
 }
 
 class AlertItem {

@@ -671,23 +671,23 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
                     ),
                   ),
 
-                  if (_marineMetrics != null)
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                      sliver: SliverToBoxAdapter(
-                        child: _buildMarineSection(colorScheme, theme),
-                      ),
-                    ),
-
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
-                    sliver: SliverToBoxAdapter(
-                      child: _isLoadingClimate
-                          ? const Center(child: CircularProgressIndicator())
-                          : _buildClimateSection(colorScheme, theme),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  sliver: SliverToBoxAdapter(
+                    child: _isLoadingClimate
+                        ? const Center(child: CircularProgressIndicator())
+                         : _buildClimateSection(colorScheme, theme),
                     ),
                   ),
-                ],
+
+                if (_marineMetrics != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildMarineSection(colorScheme, theme),
+                    ),
+                  ),
+              ],
               ),
             ),
           ),
@@ -1242,11 +1242,11 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: 16),
-             ListView.separated(
+             ),
+             const SizedBox(height: 16),
+              ListView.separated(
                shrinkWrap: true,
                physics: const NeverScrollableScrollPhysics(),
                itemCount: _forecast.isNotEmpty ? _forecast.length : 3,
@@ -1384,8 +1384,8 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 20),
-            if (agri != null) ...[
+             const SizedBox(height: 20),
+             if (agri != null) ...[
               Row(
                 children: [
                   Container(
@@ -1397,10 +1397,10 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
                     child: Icon(Icons.agriculture_rounded, color: cs.primary, size: 16),
                   ),
                   const SizedBox(width: 8),
-                   Text(AppLocalizations.of(context).agriculturalConditions, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.primary)),
+                  Text(AppLocalizations.of(context).agriculturalConditions, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.primary)),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               _buildClimateMetricsGrid(cs, theme, {
                 'ET\u2080 (mm)': agri.et0FaoEvapotranspiration,
                 'Soil Temp': agri.soilTemp0To7cm,
@@ -1965,15 +1965,26 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
           child: Icon(Icons.message_rounded, color: Colors.white, size: 20),
         ),
       ),
-    );
-  }
+   );
+   }
 
-  Widget _buildMarineSection(ColorScheme cs, ThemeData theme) {
+   Widget _buildDirectionChip(ColorScheme cs, ThemeData theme, String label, double? direction) {
+    final dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    final idx = ((direction ?? 0) / 22.5).round() % 16;
+    return Chip(
+      backgroundColor: cs.surfaceContainerLowest,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      label: Text('$label: ${dirs[idx]}', style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+    );
+   }
+
+   Widget _buildMarineSection(ColorScheme cs, ThemeData theme) {
     final marine = _marineMetrics;
     if (marine == null) return const SizedBox.shrink();
+    final loc = AppLocalizations.of(context);
     return Card(
       elevation: 0,
-      color: cs.surfaceContainerHighest,
+      color: cs.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1982,22 +1993,73 @@ class _WeatherDashboardPageState extends State<WeatherDashboardPage> {
           children: [
             Row(
               children: [
-                Icon(Icons.water_rounded, color: cs.primary, size: 20),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.waves_rounded, color: cs.primary, size: 16),
+                ),
                 const SizedBox(width: 8),
-                Text(AppLocalizations.of(context).marineConditions, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.primary)),
+                Text(loc.marineConditions, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: cs.primary)),
               ],
             ),
             const SizedBox(height: 12),
             _buildClimateMetricsGrid(cs, theme, {
-              'Wave Height': marine.waveHeight,
-              'Sea Temp': marine.seaSurfaceTemperature,
-              'Wind Gusts': marine.windGusts,
+              'Wave Height (m)': marine.waveHeight,
+              'Wave Period (s)': marine.wavePeriod,
+              'Swell Height (m)': marine.swellWaveHeight,
+              'Sea Temp (\u00b0C)': marine.seaSurfaceTemperature,
+              'Wind Gusts (km/h)': marine.windGusts,
             }),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildDirectionChip(cs, theme, 'Wave Dir', marine.waveDirection),
+                _buildDirectionChip(cs, theme, 'Swell Dir', marine.swellWaveDirection),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text('Data Sources', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 16,
+              runSpacing: 8,
+                children: [
+                 _buildDataSourceLink(cs, 'INCOIS LAS', 'https://las.incois.gov.in/'),
+                 _buildDataSourceLink(cs, 'Copernicus Marine', 'https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/description'),
+                 _buildDataSourceLink(cs, 'Open-Meteo Marine', 'https://marine-api.open-meteo.com/v1/marine'),
+                 _buildDataSourceLink(cs, 'StormGlass', 'https://stormglass.io/'),
+                 _buildDataSourceLink(cs, 'Argo Global Data', 'https://argo.ucsd.edu/'),
+                 _buildDataSourceLink(cs, 'Glider Data', 'https://erddap.ifremer.fr/'),
+                ],
+            ),
           ],
         ),
       ),
     );
-  }
+   }
+
+  Widget _buildDataSourceLink(ColorScheme cs, String label, String url) {
+    return InkWell(
+      onTap: () => _launchUrl(url),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.link_rounded, size: 14),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(color: cs.primary, fontSize: 12, decoration: TextDecoration.underline)),
+        ],
+      ),
+    );
+   }
+
+   Future<void> _launchUrl(String url) async {
+    final uri = Uri.parse(url);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+   }
 
   void _showHelpBottomSheet() {
     showModalBottomSheet(
