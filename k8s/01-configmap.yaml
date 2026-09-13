@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weathergpt-config
+  namespace: weathergpt
+data:
+  # Application settings
+  LOG_LEVEL: "INFO"
+  PORT: "8000"
+  PUBLIC_BASE_URL: "http://weathergpt.example.com"
+
+  # Database URLs (point to in-cluster services)
+  POSTGRES_URL: "postgresql+asyncpg://weathergpt:$(POSTGRES_PASSWORD)@postgres:5432/weathergpt"
+  TIMESCALE_URL: "postgresql+asyncpg://weathergpt:$(TIMESCALE_PASSWORD)@timescaledb:5432/weathergpt_ts"
+  MONGO_URL: "mongodb://weathergpt:$(MONGO_PASSWORD)@mongo:27017/weathergpt?authSource=admin"
+
+  # Default location (New Delhi)
+  DEFAULT_LAT: "28.61"
+  DEFAULT_LON: "77.21"
+  DEFAULT_WHATSAPP_LANG: "hi"
+
+  # Alert generator settings
+  ALERT_POLL_INTERVAL_SECONDS: "900"
+  ALERT_LANGUAGES: "english,hindi"
+  ALERT_POLL_LAT: "28.61"
+  ALERT_POLL_LON: "77.21"
+  ALERT_POLL_RADIUS_KM: "2000"
+  ALERT_POLL_DAYS: "14"
+  ALERT_MAX_DRAFTS_PER_CYCLE: "20"
+
+  # Dispatcher settings
+  MAX_DISPATCH_CONCURRENCY: "20"
+
+  # GEMINI model
+  GEMINI_MODEL: "gemini-2.0-flash"
+  EXPERT_MAX_TOKENS: "2048"
+  EXPERT_TEMPERATURE: "0.4"
+
+  # Media directory
+  MEDIA_DIR: "/tmp/weathergpt_media"

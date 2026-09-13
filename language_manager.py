@@ -45,9 +45,9 @@ LANGUAGE_MAP: Dict[str, Tuple[str, str, str, str]] = {
 }
 
 # Reverse lookup helpers
-FLORES_TO_NAME: Dict[str, str] = {v[0]: k for k, v in LANGUAGE_MAP.items()}
-BHASHINI_TO_NAME: Dict[str, str] = {v[1]: k for k, v in LANGUAGE_MAP.items()}
-ISO_TO_NAME: Dict[str, str] = {v[3]: k for k, v in LANGUAGE_MAP.items()}
+FLORES_TO_NAME: Dict[str, str] = {v[0].lower(): k for k, v in LANGUAGE_MAP.items()}
+BHASHINI_TO_NAME: Dict[str, str] = {v[1].lower(): k for k, v in LANGUAGE_MAP.items()}
+ISO_TO_NAME: Dict[str, str] = {v[3].lower(): k for k, v in LANGUAGE_MAP.items()}
 
 # Common aliases (including Romanized / colloquial names)
 LANGUAGE_ALIASES: Dict[str, str] = {

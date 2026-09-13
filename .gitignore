@@ -21,6 +21,10 @@ build/
 .pub/
 build/
 
+# Flutter (in weather_app/)
+weather_app/build/
+weather_app/.dart_tool/
+
 # IDE
 .vscode/
 .idea/
@@ -34,6 +38,20 @@ Thumbs.db
 # Database
 *.db
 *.sqlite
+users.db
+
+# Flutter (in weather_app/)
+weather_app/build/
+weather_app/.dart_tool/
+weather_app/.flutter-plugins
+weather_app/.flutter-plugins-dependencies
+weather_app/.packages
+weather_app/.pub-cache/
+weather_app/.pub/
+
+# Compiled artifacts
+__pycache__/
+*.pyc
 
 # Logs
 *.log

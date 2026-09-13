@@ -25,7 +25,6 @@ from twilio.request_validator import RequestValidator
 from twilio.twiml.messaging_response import MessagingResponse
 
 from core_agent import CoreAgent
-from escalation_engine import Queue
 
 logger = logging.getLogger("sms_webhook")
 
@@ -50,7 +49,7 @@ if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
 def _validate_twilio_request(request: Request, form_data: dict) -> None:
     """
     Validate that this webhook really came from Twilio.
-    Uses the same RequestValidator pattern as Whatsapp_bot.py.
+    Uses the same RequestValidator pattern as whatsapp_webhook.py.
     Skipped when TWILIO_AUTH_TOKEN is not configured (local dev).
     """
     if not TWILIO_AUTH_TOKEN:

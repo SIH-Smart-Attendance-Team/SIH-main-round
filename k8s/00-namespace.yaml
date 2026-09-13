@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: weathergpt
+  labels:
+    app.kubernetes.io/name: weathergpt
+    app.kubernetes.io/part-of: weathergpt-platform

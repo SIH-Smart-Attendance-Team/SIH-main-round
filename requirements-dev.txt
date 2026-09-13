@@ -1,0 +1,14 @@
+# Development dependencies for WeatherGPT
+# Install with: pip install -r requirements-dev.txt
+
+# Testing
+pytest==9.1.1
+pytest-asyncio==0.23.7
+respx==0.23.1
+
+# Linting / formatting
+ruff==0.6.9
+
+# Type checking (optional)
+# mypy==1.11.1
+# types-requests==2.32.0.20240801

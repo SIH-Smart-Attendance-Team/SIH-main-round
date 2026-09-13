@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb
+  namespace: weathergpt
+  labels:
+    app: timescaledb
+    app.kubernetes.io/name: timescaledb
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: timescaledb
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: timescaledb-pvc
+  namespace: weathergpt
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: timescaledb
+  namespace: weathergpt
+  labels:
+    app: timescaledb
+    app.kubernetes.io/name: timescaledb
+    app.kubernetes.io/component: database
+spec:
+  serviceName: timescaledb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+        app.kubernetes.io/name: timescaledb
+    spec:
+      containers:
+        - name: timescaledb
+          image: timescale/timescaledb:2.17.0-pg16
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: weathergpt-secrets
+                  key: TIMESCALE_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: weathergpt-secrets
+                  key: TIMESCALE_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: weathergpt-secrets
+                  key: TIMESCALE_PASSWORD
+            - name: POSTGRES_INITDB_ARGS
+              value: "--timescaledb-telemetry-enabled=false"
+          volumeMounts:
+            - name: timescaledb-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - weathergpt
+                - -d
+                - weathergpt_ts
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - weathergpt
+                - -d
+                - weathergpt_ts
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: timescaledb-data
+          persistentVolumeClaim:
+            claimName: timescaledb-pvc

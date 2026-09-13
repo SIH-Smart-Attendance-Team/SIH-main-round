@@ -10,7 +10,7 @@ Dispatch flow:
   3. Reuse webhooks.py's filter_sessions_by_region() to get affected users
      (no duplicated region-matching logic).
   4. For each matched user session, fan out to their preferred channel:
-     - WhatsApp → Twilio Programmable WhatsApp (same Twilio account as SMS)
+     - WhatsApp → Meta WhatsApp Cloud API (whatsapp_webhook.send_whatsapp_message)
      - SMS      → Twilio Programmable SMS (sms_webhook.send_sms)
   5. Record per-channel delivery status back into the alert document's
      delivery_status array in Mongo (auditable record).
@@ -28,21 +28,13 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 logger = logging.getLogger("weathergpt.alert_dispatcher")
-
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
-TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "")
-
-# Twilio WhatsApp sandbox / production number must be in E.164 format
-# and use the 'whatsapp:' prefix for the API.
-TWILIO_FROM_WHATSAPP = f"whatsapp:{TWILIO_WHATSAPP_NUMBER}" if TWILIO_WHATSAPP_NUMBER else None
 
 
 class AlertDispatcher:
@@ -52,14 +44,17 @@ class AlertDispatcher:
     """
 
     def __init__(self):
+        # Twilio client only needed for SMS now (WhatsApp uses Meta Cloud API)
         self._twilio_client = None
+        TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+        TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
         if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
             try:
                 from twilio.rest import Client as TwilioClient
                 self._twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                logger.info("Twilio client initialized for alert dispatch")
+                logger.info("Twilio client initialized for SMS alert dispatch")
             except Exception:
-                logger.warning("Twilio client could not be initialised — WhatsApp dispatch will fail gracefully")
+                logger.warning("Twilio client could not be initialised — SMS dispatch will fail gracefully")
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -80,7 +75,6 @@ class AlertDispatcher:
             BroadcastResponse,  # noqa: F401 — confirms shape
             filter_sessions_by_region,
             get_active_sessions,
-            UserSession,
         )
 
         mongo = get_mongo_manager()
@@ -181,13 +175,14 @@ class AlertDispatcher:
             }
 
         elif channel == "whatsapp":
-            success = await self._send_whatsapp(address, script_text)
+            from whatsapp_webhook import send_whatsapp_message
+            success = await send_whatsapp_message(address, script_text)
             return {
                 "user_id": session.user_id,
                 "channel": "whatsapp",
                 "address": address,
                 "success": success,
-                "detail": None if success else "Twilio WhatsApp API error",
+                "detail": None if success else "Meta WhatsApp Cloud API error",
                 "dispatched_at": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -206,11 +201,65 @@ class AlertDispatcher:
                 "dispatched_at": datetime.now(timezone.utc).isoformat(),
             }
 
+        elif channel == "cbas":
+            # Cell Broadcast (CBAS) — government / telco infrastructure required.
+            # This stub preserves the channel architecture so it can be enabled
+            # when telco partnerships are available. The dispatch logic
+            # (geofence-based broadcast to all phones in a geographic cell)
+            # would be implemented via a telco-provided CMAS/DTISG API.
+            #
+            # Not currently implemented due to budget constraints for
+            # telco API access. This stub records the intent and returns
+            # a structured failure so the audit trail shows the channel
+            # was attempted.
+            logger.info(
+                "CBAS dispatch requested for user %s — telco infrastructure "
+                "not available (budget constraint)", session.user_id,
+            )
+            return {
+                "user_id": session.user_id,
+                "channel": "cbas",
+                "address": address,
+                "success": False,
+                "detail": (
+                    "CBAS dispatch stub: requires telco CMAS/DTISG API access. "
+                    "Architecture is ready — integration pending funding."
+                ),
+                "dispatched_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        elif channel == "vhf_csc":
+            # VHF / CSC (Common Service Center) radio broadcast — requires
+            # radio hardware and government licensing. This stub preserves
+            # the channel in the architecture for future integration with
+            # All India Radio or state disaster management VHF networks.
+            #
+            # Not currently implemented — no budget for radio hardware or
+            # licensing. The alert payload is already formatted for
+            # short broadcast (≤60 words) so it can be handed off to an
+            # operator when hardware is available.
+            logger.info(
+                "VHF/CSC dispatch requested for user %s — radio hardware "
+                "and licensing not available (budget constraint)", session.user_id,
+            )
+            return {
+                "user_id": session.user_id,
+                "channel": "vhf_csc",
+                "address": address,
+                "success": False,
+                "detail": (
+                    "VHF/CSC dispatch stub: requires radio hardware and "
+                    "government licensing. Architecture is ready — integration "
+                    "pending funding for VHF equipment and operator licensing."
+                ),
+                "dispatched_at": datetime.now(timezone.utc).isoformat(),
+            }
+
         else:
-            logger.warning("No dispatcher for channel=%s user=%s", channel, session.user_id)
-            # OUT OF SCOPE: Cell Broadcast (CBAS) and VHF/CSC integration
-            # require government / telco infrastructure access that is not
-            # available in this build. These cannot be faked with a free API.
+            logger.warning("Unknown channel=%s for user=%s", channel, session.user_id)
+            # CBAS (Cell Broadcast) and VHF/CSC are handled by their own
+            # dedicated branches above. Unknown channels are logged as errors.
+            # See k8s/00-secrets.yaml for notes on out-of-scope channels.
             return {
                 "user_id": session.user_id,
                 "channel": channel,
@@ -219,29 +268,6 @@ class AlertDispatcher:
                 "detail": "unsupported channel (CBAS/VHF/CSC out of scope — requires telco access)",
                 "dispatched_at": datetime.now(timezone.utc).isoformat(),
             }
-
-    async def _send_whatsapp(self, to: str, body: str) -> bool:
-        """
-        Send a WhatsApp message via Twilio Programmable WhatsApp.
-
-        Uses the same Twilio account as SMS (TWILIO_ACCOUNT_SID /
-        TWILIO_AUTH_TOKEN), so there's a single source of truth for
-        credentials — no separate WhatsApp provider config needed.
-        """
-        if not self._twilio_client or not TWILIO_FROM_WHATSAPP:
-            logger.warning("Twilio WhatsApp not configured — failing gracefully")
-            return False
-        try:
-            message = self._twilio_client.messages.create(
-                body=body[:4096],  # WhatsApp text limit
-                from_=TWILIO_FROM_WHATSAPP,
-                to=f"whatsapp:{to}",
-            )
-            logger.info("WhatsApp message sent to %s (sid=%s)", to, message.sid)
-            return True
-        except Exception as exc:
-            logger.warning("WhatsApp send failed to %s: %s", to, exc)
-            return False
 
     async def _dispatch_guarded(
         self,

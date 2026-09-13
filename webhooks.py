@@ -174,13 +174,12 @@ def filter_sessions_by_region(region: AffectedRegion) -> List[UserSession]:
 
 async def _dispatch_whatsapp(session: UserSession, alert: WeatherAlertPayload) -> DispatchResult:
     """
-    Send a WhatsApp message via Twilio (or any other provider).
-    This is a lightweight placeholder – wire it to your existing
-    whatsapp_bot / Twilio client in production.
+    Send a WhatsApp message via Meta Cloud API.
+    This is a lightweight placeholder – wire it to whatsapp_webhook.send_whatsapp_message in production.
     """
     try:
-        # Example: call an internal helper or Twilio REST API
-        # from whatsapp_bot import send_whatsapp_message
+        # Example: call the Meta Cloud API helper
+        # from whatsapp_webhook import send_whatsapp_message
         # await send_whatsapp_message(session.address, f"{alert.title}\n\n{alert.message}")
         logger.info(
             "WhatsApp → %s | %s | %s",

@@ -1,0 +1,193 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test-and-lint:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: weathergpt
+          POSTGRES_USER: weathergpt
+          POSTGRES_PASSWORD: weathergpt_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U weathergpt -d weathergpt"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      mongo:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_DATABASE: weathergpt
+          MONGO_INITDB_ROOT_USERNAME: weathergpt
+          MONGO_INITDB_ROOT_PASSWORD: weathergpt_test
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")' -u weathergpt -p weathergpt_test --authenticationDatabase admin"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      timescaledb:
+        image: timescale/timescaledb:2.17.0-pg16
+        env:
+          POSTGRES_DB: weathergpt_ts
+          POSTGRES_USER: weathergpt
+          POSTGRES_PASSWORD: weathergpt_test
+          POSTGRES_INITDB_ARGS: "--timescaledb-telemetry-enabled=false"
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U weathergpt -d weathergpt_ts"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run linting (ruff)
+        run: |
+          ruff check .
+
+      - name: Run tests (pytest)
+        env:
+          POSTGRES_URL: postgresql+asyncpg://weathergpt:weathergpt_test@localhost:5432/weathergpt
+          MONGO_URL: mongodb://weathergpt:weathergpt_test@localhost:27017/weathergpt?authSource=admin
+          TIMESCALE_URL: postgresql+asyncpg://weathergpt:weathergpt_test@localhost:5433/weathergpt_ts
+          JWT_SECRET: test-secret
+          GOOGLE_API_KEY: ""
+          GEMINI_API_KEY: ""
+          TWILIO_ACCOUNT_SID: ""
+          TWILIO_AUTH_TOKEN: ""
+          WHATSAPP_VERIFY_TOKEN: ""
+          WHATSAPP_ACCESS_TOKEN: ""
+          WHATSAPP_PHONE_NUMBER_ID: ""
+        run: |
+          python -m pytest tests/ -v --tb=short
+
+      - name: Verify imports resolve
+        run: |
+          python -c "
+          import db.postgres
+          import db.mongo
+          import db.timescale
+          import db.models
+          import alert_generator
+          import alert_dispatcher
+          import sms_webhook
+          import whatsapp_webhook
+          import voice_webhook
+          import AI_engine
+          import core_agent
+          import escalation_engine
+          import language_manager
+          import main
+          import weathergpt_expert
+          import weather_service
+          import voice_service
+          import webhooks
+          import disaster_tools
+          import system_prompt
+          import auth_db
+          print('All imports OK')
+          "
+
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: test-and-lint
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-push:
+    name: Push to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: test-and-lint
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
