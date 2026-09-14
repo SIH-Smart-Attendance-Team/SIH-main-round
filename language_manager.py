@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Dict, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # 22 Scheduled Languages of India → FLORES-200 / Bhashini codes
@@ -19,7 +18,7 @@ from typing import Dict, Optional, Tuple
 
 # Primary mapping used throughout the system.
 # Format: language_name → (flores_code, bhashini_code, script, iso_639_3)
-LANGUAGE_MAP: Dict[str, Tuple[str, str, str, str]] = {
+LANGUAGE_MAP: dict[str, tuple[str, str, str, str]] = {
     "assamese":   ("asm_Beng", "as", "Beng", "asm"),
     "bengali":    ("ben_Beng", "bn", "Beng", "ben"),
     "bodo":       ("brx_Deva", "brx", "Deva", "brx"),
@@ -45,12 +44,12 @@ LANGUAGE_MAP: Dict[str, Tuple[str, str, str, str]] = {
 }
 
 # Reverse lookup helpers
-FLORES_TO_NAME: Dict[str, str] = {v[0].lower(): k for k, v in LANGUAGE_MAP.items()}
-BHASHINI_TO_NAME: Dict[str, str] = {v[1].lower(): k for k, v in LANGUAGE_MAP.items()}
-ISO_TO_NAME: Dict[str, str] = {v[3].lower(): k for k, v in LANGUAGE_MAP.items()}
+FLORES_TO_NAME: dict[str, str] = {v[0].lower(): k for k, v in LANGUAGE_MAP.items()}
+BHASHINI_TO_NAME: dict[str, str] = {v[1].lower(): k for k, v in LANGUAGE_MAP.items()}
+ISO_TO_NAME: dict[str, str] = {v[3].lower(): k for k, v in LANGUAGE_MAP.items()}
 
 # Common aliases (including Romanized / colloquial names)
-LANGUAGE_ALIASES: Dict[str, str] = {
+LANGUAGE_ALIASES: dict[str, str] = {
     "as": "assamese", "asm": "assamese",
     "bn": "bengali", "ben": "bengali", "bangla": "bengali",
     "brx": "bodo",
@@ -124,7 +123,7 @@ def get_script(lang: str) -> str:
     return LANGUAGE_MAP[name][2]
 
 
-def list_supported_languages() -> Dict[str, Dict[str, str]]:
+def list_supported_languages() -> dict[str, dict[str, str]]:
     """Return a human-readable catalogue of all supported languages."""
     result = {
         "english": {
@@ -277,7 +276,7 @@ def translate_to_native(text: str, target_lang: str) -> str:
 # Convenience high-level helper
 # ---------------------------------------------------------------------------
 
-def prepare_for_nlu(text: str, source_lang: str) -> Dict[str, str]:
+def prepare_for_nlu(text: str, source_lang: str) -> dict[str, str]:
     """
     End-to-end preprocessing for an incoming user utterance:
       1. Detect / normalise language code

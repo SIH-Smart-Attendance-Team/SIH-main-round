@@ -14,8 +14,9 @@ import sys
 import time
 import traceback
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
@@ -31,9 +32,9 @@ load_dotenv()
 # Database persistence imports (lazy-loaded for graceful degradation)
 # ---------------------------------------------------------------------------
 try:
-    from db.postgres import get_postgres_manager, close_postgres_manager
-    from db.mongo import get_mongo_manager, close_mongo_manager
-    from db.timescale import get_timescale_manager, close_timescale_manager
+    from db.mongo import close_mongo_manager, get_mongo_manager
+    from db.postgres import close_postgres_manager, get_postgres_manager
+    from db.timescale import close_timescale_manager, get_timescale_manager
     _PERSISTENCE_AVAILABLE = True
 except ImportError:
     _PERSISTENCE_AVAILABLE = False
@@ -283,18 +284,18 @@ def create_app(
         try:
             from weather_service import get_weather_service
             get_weather_service()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Weather service init failed: %s", exc)
         try:
             from voice_service import get_voice_service
             get_voice_service()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Voice service init failed: %s", exc)
         try:
             from webhooks import seed_demo_sessions
             seed_demo_sessions()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Demo sessions seeding failed: %s", exc)
 
         # Start proactive disaster alert draft generator scheduler
         try:
@@ -341,8 +342,8 @@ def create_app(
         try:
             from weather_service import get_weather_service
             await get_weather_service().aclose()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Weather service close failed: %s", exc)
 
         # Close persistence connections
         if _PERSISTENCE_AVAILABLE:
@@ -367,7 +368,7 @@ def create_app(
     # ---- Health endpoint is expected from main.py; add a minimal one if absent
     if not any(getattr(r, "path", "") == "/health" for r in app.routes):
         @app.get("/health", tags=["System"])
-        async def health() -> Dict[str, Any]:
+        async def health() -> dict[str, Any]:
             # Check all persistence stores
             stores = {}
             if _PERSISTENCE_AVAILABLE:

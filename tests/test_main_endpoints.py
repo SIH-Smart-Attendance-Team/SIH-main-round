@@ -4,10 +4,6 @@ test_main_endpoints.py — Integration tests for main.py FastAPI endpoints.
 Uses FastAPI TestClient with all external dependencies mocked via conftest fixtures.
 """
 
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime, timezone
 
 
 class TestHealthEndpoint:

@@ -7,7 +7,7 @@ external services (Redis, PostgreSQL, MongoDB, TimescaleDB, Open-Meteo, etc.).
 
 import sys
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,17 +25,17 @@ class MockRedis:
     """In-memory Redis-like store for testing."""
 
     def __init__(self):
-        self._data: Dict[str, str] = {}
-        self._ttls: Dict[str, float] = {}
+        self._data: dict[str, str] = {}
+        self._ttls: dict[str, float] = {}
 
-    def set(self, key: str, value: str, ex: Optional[int] = None) -> bool:
+    def set(self, key: str, value: str, ex: int | None = None) -> bool:
         self._data[key] = value
         if ex:
             import time
             self._ttls[key] = time.time() + ex
         return True
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         if key in self._ttls:
             import time
             if time.time() > self._ttls[key]:
@@ -114,7 +114,7 @@ def mock_core_agent():
 class MockPostgresManager:
     def __init__(self):
         self._healthy = True
-        self._events: List[Dict] = []
+        self._events: list[dict] = []
 
     async def initialize(self):
         pass
@@ -138,16 +138,16 @@ class MockPostgresManager:
         self._events.append(event)
         return event
 
-    async def get_disaster_events(self, limit: int = 100, **filters) -> List:
+    async def get_disaster_events(self, limit: int = 100, **filters) -> list:
         return self._events[-limit:]
 
 
 class MockMongoManager:
     def __init__(self):
         self._healthy = True
-        self._advisories: List[Dict] = []
-        self._bulletins: List[Dict] = []
-        self._alerts: List[Dict] = []
+        self._advisories: list[dict] = []
+        self._bulletins: list[dict] = []
+        self._alerts: list[dict] = []
 
     async def initialize(self):
         pass
@@ -174,14 +174,14 @@ class MockMongoManager:
     def alerts(self):
         return self
 
-    async def insert_one(self, doc: Dict):
+    async def insert_one(self, doc: dict):
         from bson import ObjectId
         doc["_id"] = ObjectId()
         if "created_at" not in doc:
             doc["created_at"] = datetime.now(timezone.utc)
         return MagicMock(inserted_id=doc["_id"])
 
-    async def find_one(self, query: Dict, sort=None):
+    async def find_one(self, query: dict, sort=None):
         for doc in reversed(self._advisories + self._bulletins + self._alerts):
             match = True
             for k, v in query.items():
@@ -192,15 +192,15 @@ class MockMongoManager:
                 return doc
         return None
 
-    def find(self, query: Dict):
+    def find(self, query: dict):
         return MockCursor(self._advisories + self._bulletins + self._alerts, query)
 
-    async def update_one(self, query: Dict, update: Dict):
+    async def update_one(self, query: dict, update: dict):
         return MagicMock(modified_count=1)
 
 
 class MockCursor:
-    def __init__(self, docs: List[Dict], query: Dict):
+    def __init__(self, docs: list[dict], query: dict):
         self._docs = [d for d in docs if all(d.get(k) == v for k, v in query.items())]
 
     def sort(self, *args, **kwargs):
@@ -248,7 +248,6 @@ def mock_timescale_manager():
 # ---------------------------------------------------------------------------
 # Mock external HTTP calls (Open-Meteo, USGS, GDACS, etc.)
 # ---------------------------------------------------------------------------
-import httpx
 
 @pytest.fixture
 def mock_external_apis():
@@ -365,7 +364,7 @@ def test_client(mock_redis, mock_core_agent, mock_postgres_manager, mock_mongo_m
 # Sample data fixtures
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def sample_disaster_event() -> Dict[str, Any]:
+def sample_disaster_event() -> dict[str, Any]:
     """A sample disaster event for testing."""
     return {
         "id": "evt_123",
@@ -381,7 +380,7 @@ def sample_disaster_event() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_alert_draft() -> Dict[str, Any]:
+def sample_alert_draft() -> dict[str, Any]:
     """A sample alert draft document."""
     return {
         "_id": "507f1f77bcf86cd799439011",

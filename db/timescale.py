@@ -18,8 +18,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional, List, Any
 
 from sqlalchemy import (
     JSON,
@@ -29,12 +29,9 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
-    func,
     select,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -57,18 +54,18 @@ class ForecastObservation(TimescaleBase):
     time: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    location_id: Mapped[Optional[int]] = mapped_column(
+    location_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("locations.id", ondelete="SET NULL"), nullable=True
     )
     lat: Mapped[float] = mapped_column(Float, nullable=False)
     lon: Mapped[float] = mapped_column(Float, nullable=False)
-    temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    relative_humidity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    precipitation: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    wind_speed: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    wind_direction: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    pressure: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    weather_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    relative_humidity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    precipitation: Mapped[float | None] = mapped_column(Float, nullable=True)
+    wind_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    wind_direction: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pressure: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weather_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="open-meteo", nullable=False)
     raw_json: Mapped[dict] = mapped_column(JSON, nullable=False)
 
@@ -84,7 +81,7 @@ class TimescaleManager:
 
     def __init__(
         self,
-        url: Optional[str] = None,
+        url: str | None = None,
         pool_size: int = 10,
         max_overflow: int = 20,
         pool_timeout: float = 30.0,
@@ -98,8 +95,8 @@ class TimescaleManager:
         if not self._url:
             raise ValueError("TIMESCALE_URL or POSTGRES_URL environment variable not set")
 
-        self._engine: Optional[AsyncEngine] = None
-        self._session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+        self._engine: AsyncEngine | None = None
+        self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._pool_size = pool_size
         self._max_overflow = max_overflow
         self._pool_timeout = pool_timeout
@@ -224,7 +221,7 @@ class TimescaleManager:
     # -----------------------------------------------------------------------
 
     async def insert_observations_batch(
-        self, observations: List[dict]
+        self, observations: list[dict]
     ) -> int:
         """Bulk insert forecast observations. Returns count inserted."""
         if not observations:
@@ -240,16 +237,16 @@ class TimescaleManager:
         time: dt.datetime,
         lat: float,
         lon: float,
-        temperature: Optional[float] = None,
-        relative_humidity: Optional[float] = None,
-        precipitation: Optional[float] = None,
-        wind_speed: Optional[float] = None,
-        wind_direction: Optional[float] = None,
-        pressure: Optional[float] = None,
-        weather_code: Optional[int] = None,
+        temperature: float | None = None,
+        relative_humidity: float | None = None,
+        precipitation: float | None = None,
+        wind_speed: float | None = None,
+        wind_direction: float | None = None,
+        pressure: float | None = None,
+        weather_code: int | None = None,
         source: str = "open-meteo",
-        raw_json: Optional[dict] = None,
-        location_id: Optional[int] = None,
+        raw_json: dict | None = None,
+        location_id: int | None = None,
     ) -> ForecastObservation:
         """Insert a single forecast observation."""
         obs = ForecastObservation(
@@ -277,10 +274,10 @@ class TimescaleManager:
         self,
         lat: float,
         lon: float,
-        since: Optional[dt.datetime] = None,
-        until: Optional[dt.datetime] = None,
+        since: dt.datetime | None = None,
+        until: dt.datetime | None = None,
         limit: int = 1000,
-    ) -> List[ForecastObservation]:
+    ) -> list[ForecastObservation]:
         """Get observations for a location within a time range."""
         lat_delta = 0.01
         lon_delta = 0.01
@@ -304,10 +301,10 @@ class TimescaleManager:
     async def get_observations_by_location_id(
         self,
         location_id: int,
-        since: Optional[dt.datetime] = None,
-        until: Optional[dt.datetime] = None,
+        since: dt.datetime | None = None,
+        until: dt.datetime | None = None,
         limit: int = 1000,
-    ) -> List[ForecastObservation]:
+    ) -> list[ForecastObservation]:
         """Get observations for a location_id within a time range."""
         async with self.session() as session:
             stmt = (
@@ -325,7 +322,7 @@ class TimescaleManager:
 
     async def get_latest_observation(
         self, lat: float, lon: float
-    ) -> Optional[ForecastObservation]:
+    ) -> ForecastObservation | None:
         """Get the most recent observation for a location."""
         lat_delta = 0.01
         lon_delta = 0.01
@@ -346,9 +343,9 @@ class TimescaleManager:
         lat: float,
         lon: float,
         bucket_interval: str = "1 hour",
-        since: Optional[dt.datetime] = None,
-        until: Optional[dt.datetime] = None,
-    ) -> List[dict]:
+        since: dt.datetime | None = None,
+        until: dt.datetime | None = None,
+    ) -> list[dict]:
         """Get time-bucketed statistics using TimescaleDB's time_bucket."""
         lat_delta = 0.01
         lon_delta = 0.01
@@ -384,7 +381,7 @@ class TimescaleManager:
             return [dict(row._mapping) for row in result.fetchall()]
 
 
-_timescale_manager: Optional[TimescaleManager] = None
+_timescale_manager: TimescaleManager | None = None
 
 
 def get_timescale_manager() -> TimescaleManager:

@@ -13,16 +13,18 @@ your actual module layout.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from AI_engine import generate_weather_advisory
 from escalation_engine import (
-    EscalationEngine,
-    ConversationTurn,
     ConversationState,
+    ConversationTurn,
     EscalationDecision,
+    EscalationEngine,
 )
+
+logger = logging.getLogger("weathergpt.core_agent")
 
 try:
     import redis
@@ -80,8 +82,8 @@ class SessionStore:
             try:
                 self._r.set(self._key(state.channel, state.session_id), payload, ex=SESSION_TTL_SECONDS)
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Redis set failed, falling back to memory: %s", exc)
         self._memory[self._key(state.channel, state.session_id)] = payload
 
 
@@ -98,7 +100,7 @@ class CoreAgent:
         channel: str,
         user_text: str,
         language: str = "en",
-        location: Optional[str] = None,
+        location: str | None = None,
     ) -> AgentReply:
         state = self.sessions.load(channel, session_id)
         if location:

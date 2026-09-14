@@ -19,19 +19,18 @@ Pipeline:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
+
 from language_manager import (
+    get_bhashini_code,
     normalize_lang_code,
     prepare_for_nlu,
-    process_code_mixed_script,
-    translate_to_english,
     translate_to_native,
-    get_bhashini_code,
 )
 from weather_service import WeatherService, get_weather_service
 
@@ -46,7 +45,6 @@ try:
 except ImportError:
     _MONGO_AVAILABLE = False
 
-import logging
 logger = logging.getLogger("weathergpt.ai_engine")
 
 # ---------------------------------------------------------------------------
@@ -58,9 +56,9 @@ _llm = None
 _prompt = None
 
 try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_google_genai import ChatGoogleGenerativeAI
 
     _LLM_AVAILABLE = True
 except ImportError:
@@ -136,7 +134,7 @@ async def _build_weather_context(
     except Exception as exc:
         return f"(Weather data temporarily unavailable: {exc})"
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(
         f"Location: {lat:.3f}, {lon:.3f} | Timezone: {current.get('timezone', 'N/A')}"
     )
@@ -198,10 +196,10 @@ async def _generate_advisory_english(query: str, weather_context: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def generate_alert_draft(
-    event: Dict[str, Any],
+    event: dict[str, Any],
     language: str,
     *,
-    llm: Optional[Any] = None,
+    llm: Any | None = None,
 ) -> str:
     """
     Generate a short, localized warning draft for a disaster event.
@@ -307,10 +305,10 @@ async def generate_weather_advisory(
     lat: float,
     lon: float,
     *,
-    target_lang: Optional[str] = None,
-    weather_svc: Optional[WeatherService] = None,
+    target_lang: str | None = None,
+    weather_svc: WeatherService | None = None,
     use_cache: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Full WeatherGPT pipeline.
 
@@ -444,8 +442,8 @@ async def generate_weather_advisory(
                 location = await pg.get_location_by_name(f"{lat:.4f},{lon:.4f}")
                 if location:
                     location_id = location.id
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to get location_id from Postgres: %s", exc)
 
             await mongo.store_advisory(
                 location_id=location_id,
@@ -476,7 +474,7 @@ def generate_weather_advisory_sync(
     lat: float,
     lon: float,
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Blocking helper for non-async callers."""
     import asyncio
     return asyncio.run(

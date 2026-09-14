@@ -10,7 +10,6 @@ import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Dict, Optional
 
 logger = logging.getLogger("weathergpt.auth_db")
 
@@ -19,7 +18,7 @@ DB_PATH = "users.db"
 _lock = threading.Lock()
 
 
-def init_db(db_path: Optional[str] = None) -> None:
+def init_db(db_path: str | None = None) -> None:
     global DB_PATH
     if db_path:
         DB_PATH = db_path
@@ -49,7 +48,7 @@ def _get_conn():
         conn.close()
 
 
-def create_user(user_id: str, email: str, password_hash: str, name: Optional[str] = None) -> bool:
+def create_user(user_id: str, email: str, password_hash: str, name: str | None = None) -> bool:
     with _lock:
         with _get_conn() as conn:
             try:
@@ -64,32 +63,29 @@ def create_user(user_id: str, email: str, password_hash: str, name: Optional[str
                 return False
 
 
-def get_user_by_email(email: str) -> Optional[Dict[str, str]]:
-    with _lock:
-        with _get_conn() as conn:
-            row = conn.execute(
-                "SELECT id, email, password_hash, name FROM users WHERE email = ?",
-                (email,),
-            ).fetchone()
-            if row is None:
-                return None
-            return dict(row)
+def get_user_by_email(email: str) -> dict[str, str] | None:
+    with _lock, _get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, email, password_hash, name FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
 
 
-def get_user_by_id(user_id: str) -> Optional[Dict[str, str]]:
-    with _lock:
-        with _get_conn() as conn:
-            row = conn.execute(
-                "SELECT id, email, password_hash, name FROM users WHERE id = ?",
-                (user_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            return dict(row)
+def get_user_by_id(user_id: str) -> dict[str, str] | None:
+    with _lock, _get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, email, password_hash, name FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
 
 
 def count_users() -> int:
-    with _lock:
-        with _get_conn() as conn:
-            row = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()
-            return row["c"] if row else 0
+    with _lock, _get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()
+        return row["c"] if row else 0

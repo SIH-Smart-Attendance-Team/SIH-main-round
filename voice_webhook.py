@@ -28,13 +28,17 @@ Env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER,
           HUMAN_AGENT_ROUTING (see routing_table below)
 """
 
+import logging
 import os
+
 from fastapi import FastAPI, Request, Response
-from twilio.twiml.voice_response import VoiceResponse, Gather, Dial
 from twilio.rest import Client as TwilioClient
+from twilio.twiml.voice_response import Dial, Gather, VoiceResponse
 
 from core_agent import CoreAgent
 from escalation_engine import Queue
+
+logger = logging.getLogger("voice_webhook")
 
 app = FastAPI()
 agent = CoreAgent()
@@ -48,8 +52,8 @@ if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
     try:
         twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         _twilio_client = twilio_client
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Twilio client init failed: %s", exc)
 
 # Static routing table for MVP; replace with Twilio TaskRouter or a real
 # on-call/skills-based queue for production (availability, shift, language).
@@ -278,7 +282,7 @@ async def _handle_dtmf_topic_selection(digit: str, lang: str, topic: str) -> Res
     }
 
     user_text = topic_queries.get(topic, topic)
-    call_sid = ""  # not available in DTMF context; use a generated session
+    _call_sid = ""  # not available in DTMF context; use a generated session
     session_id = f"sms-dtmf-{lang}-{topic}"
 
     try:
@@ -315,8 +319,8 @@ async def _handle_dtmf_topic_selection(digit: str, lang: str, topic: str) -> Res
         vr.redirect(f"{PUBLIC_BASE_URL}/voice/incoming?lang={lang}")
         return _twiml(vr)
 
-    except Exception as exc:
-        logger.exception("DTMF topic handling failed: %s", exc)
+    except Exception as _exc:
+        logger.exception("DTMF topic handling failed")
         vr = VoiceResponse()
         vr.say(
             "क्षमा करें, अभी सेवा उपलब्ध नहीं है। कृपया बाद में प्रयास करें।",
@@ -332,7 +336,7 @@ async def voice_gather(request: Request, lang: str = "en"):
     call_sid = form.get("CallSid")
     speech_result = form.get("SpeechResult", "")
     digits = form.get("Digits", "")
-    caller_number = form.get("From")
+    _caller_number = form.get("From")
 
     # If the caller pressed digits instead of speaking, route to CoreAgent
     # with a synthesized query
