@@ -8,8 +8,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # Use lowercase for GHCR repository names (required by Docker)
-  IMAGE_NAME: ${{ github.repository_lower }}
 
 jobs:
   test-and-lint:
@@ -98,7 +96,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_lower }}
           tags: |
             type=raw,value=test
 
@@ -141,7 +139,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_lower }}
           tags: |
             type=ref,event=branch
             type=sha,prefix=
