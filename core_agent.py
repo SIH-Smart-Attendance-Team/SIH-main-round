@@ -13,6 +13,7 @@ your actual module layout.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 
 from AI_engine import generate_weather_advisory
@@ -22,6 +23,8 @@ from escalation_engine import (
     EscalationDecision,
     EscalationEngine,
 )
+
+logger = logging.getLogger("weathergpt.core_agent")
 
 try:
     import redis

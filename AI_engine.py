@@ -19,6 +19,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
@@ -43,8 +44,6 @@ try:
     _MONGO_AVAILABLE = True
 except ImportError:
     _MONGO_AVAILABLE = False
-
-import logging
 
 logger = logging.getLogger("weathergpt.ai_engine")
 

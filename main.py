@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
+import os
+import secrets
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any
 
+import jwt
 from dotenv import load_dotenv
 from fastapi import (
     Depends,
@@ -40,12 +44,6 @@ logger = logging.getLogger("weathergpt.main")
 # ---------------------------------------------------------------------------
 # Auth (JWT)
 # ---------------------------------------------------------------------------
-
-import hashlib
-import os
-import secrets
-
-import jwt
 
 JWT_SECRET = os.getenv("JWT_SECRET", "weathergpt-dev-secret-change-me")
 JWT_ALGORITHM = "HS256"

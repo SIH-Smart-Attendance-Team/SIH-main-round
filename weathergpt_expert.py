@@ -41,6 +41,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Language utilities
+from language_manager import (
+    normalize_lang_code,
+    prepare_for_nlu,
+    translate_to_native,
+)
+
+# Weather data
+from weather_service import WeatherService, get_weather_service
+
 logger = logging.getLogger("weathergpt.expert")
 
 # ---------------------------------------------------------------------------
@@ -64,20 +74,6 @@ try:
     _VOICE_AVAILABLE = True
 except ImportError:
     logger.warning("voice_service not available – voice features disabled")
-
-# Language utilities
-from language_manager import (
-    normalize_lang_code,
-    prepare_for_nlu,
-    translate_to_native,
-)
-
-# Weather data
-from weather_service import WeatherService, get_weather_service
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 
 VALID_PERSONAS = ("farmer", "fisherman", "urban_commuter", "general")
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
