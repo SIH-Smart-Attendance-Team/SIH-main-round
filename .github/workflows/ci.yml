@@ -8,7 +8,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Use lowercase for GHCR repository names (required by Docker)
+  IMAGE_NAME: ${{ github.repository_lower }}
 
 jobs:
   test-and-lint:
