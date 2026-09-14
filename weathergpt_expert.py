@@ -39,8 +39,6 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # Language utilities
 from language_manager import (
     normalize_lang_code,
@@ -50,6 +48,8 @@ from language_manager import (
 
 # Weather data
 from weather_service import WeatherService, get_weather_service
+
+load_dotenv()
 
 logger = logging.getLogger("weathergpt.expert")
 
